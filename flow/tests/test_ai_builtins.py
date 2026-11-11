@@ -1,9 +1,14 @@
 # Copyright (c) 2026, Frappe Technologies and contributors
 # License: MIT. See LICENSE
 
-import frappe
-from frappe.tests import IntegrationTestCase
+from typing import cast
 
+import frappe
+from frappe.desk.doctype.todo.todo import ToDo
+from frappe.tests import IntegrationTestCase
+from frappe.tests.classes.context_managers import enable_safe_exec
+
+from flow.flow.doctype.flow_tool.flow_tool import FlowTool
 from flow.tools.builtins import (
 	BUILTIN_TOOLS,
 	create,
@@ -74,7 +79,9 @@ class TestRead(IntegrationTestCase):
 		frappe.db.rollback()
 
 	def test_reads_matching_records(self):
-		todo = frappe.get_doc({"doctype": "ToDo", "description": "ai builtin read probe"}).insert()
+		todo = cast(
+			ToDo, frappe.get_doc({"doctype": "ToDo", "description": "ai builtin read probe"})
+		).insert()
 
 		rows = read(doctype="ToDo", filters={"description": "ai builtin read probe"})
 
@@ -93,7 +100,7 @@ class TestRead(IntegrationTestCase):
 class TestExecute(IntegrationTestCase):
 	@classmethod
 	def setUpClass(cls):
-		cls.enterClassContext(cls.enable_safe_exec())
+		cls.enterClassContext(enable_safe_exec())
 		super().setUpClass()
 
 	def tearDown(self):
@@ -110,7 +117,7 @@ class TestExecute(IntegrationTestCase):
 		self.assertIsInstance(count, int)
 
 	def test_imports_are_blocked(self):
-		with self.assertRaises(Exception):  # noqa: B017
+		with self.assertRaises(ImportError):
 			execute(code="import os\nresult = os.getcwd()", description="Get working directory")
 
 
@@ -147,7 +154,7 @@ class TestCreate(IntegrationTestCase):
 
 class TestUpdate(IntegrationTestCase):
 	def setUp(self):
-		self.todo = frappe.get_doc({"doctype": "ToDo", "description": "ai update probe"}).insert()
+		self.todo = cast(ToDo, frappe.get_doc({"doctype": "ToDo", "description": "ai update probe"})).insert()
 
 	def tearDown(self):
 		frappe.set_user("Administrator")
@@ -185,7 +192,7 @@ class TestUpdate(IntegrationTestCase):
 
 class TestDelete(IntegrationTestCase):
 	def setUp(self):
-		self.todo = frappe.get_doc({"doctype": "ToDo", "description": "ai delete probe"}).insert()
+		self.todo = cast(ToDo, frappe.get_doc({"doctype": "ToDo", "description": "ai delete probe"})).insert()
 
 	def tearDown(self):
 		frappe.set_user("Administrator")
@@ -225,7 +232,7 @@ class TestSyncBuiltinTools(IntegrationTestCase):
 
 	def test_resolves_back_to_runtime_tool(self):
 		sync_builtin_tools()
-		doc = frappe.get_doc("Flow Tool", "describe")
+		doc = cast(FlowTool, frappe.get_doc("Flow Tool", "describe"))
 		runtime = doc.to_tool()
 		self.assertEqual(runtime.name, "describe")
 		self.assertIn("doctype", runtime.parameters["properties"])

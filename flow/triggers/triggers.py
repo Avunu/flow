@@ -3,15 +3,39 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
+from contextlib import contextmanager
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import frappe
 
 if TYPE_CHECKING:
 	from frappe.model.document import Document
 
+	from flow.flow.doctype.flow_agent.flow_agent import FlowAgent
+	from flow.flow.doctype.flow_trigger.flow_trigger import FlowTrigger
+
 DOC_EVENTS = frozenset({"after_insert", "on_update", "on_submit", "on_cancel", "on_trash"})
+
+
+@contextmanager
+def _acting_as(user: str) -> Generator[None]:
+	"""Run the block as `user`, then put the caller's identity back (also when the block raises).
+
+	A trigger deliberately runs as its configured `run_as` user (falling back to the user who
+	owns the trigger), not as whoever's action fired it. The identity is never request data:
+	only System Managers can write a Flow Trigger (its only permission row), and
+	FlowTrigger._validate_run_as rejects Guest and disabled users at save time.
+	"""
+	original_user = frappe.session.user
+	# nosemgrep: frappe-setuser -- impersonation is the Flow Trigger run_as feature; see the docstring
+	frappe.set_user(user)
+	try:
+		yield
+	finally:
+		# nosemgrep: frappe-setuser -- restores the identity captured on entry, not an input
+		frappe.set_user(original_user)
 
 
 def _doctype_triggers(target_doctype: str, doc_event: str) -> list:
@@ -44,12 +68,8 @@ def _passes_condition(trigger, doc: Document) -> bool:
 	"""Evaluate the pre-enqueue condition as the trigger's run identity (matching fire),
 	so a permission-sensitive condition doesn't silently under-fire for the low-privilege
 	user whose action triggered it."""
-	original_user = frappe.session.user
-	frappe.set_user(trigger.run_as or trigger.owner)
-	try:
+	with _acting_as(trigger.run_as or trigger.owner):
 		return _eval_condition(trigger.condition, doc)
-	finally:
-		frappe.set_user(original_user)
 
 
 def dispatch(doc: Document, method: str | None = None) -> None:
@@ -104,14 +124,12 @@ def fire(
 	target_name: str | None = None,
 ) -> str | None:
 	"""Worker: render the prompt and run the agent. Returns the Flow Run name, or None if skipped."""
-	t = frappe.get_doc("Flow Trigger", trigger)
+	t = cast("FlowTrigger", frappe.get_doc("Flow Trigger", trigger))
 	if not t.enabled:
 		return None
 
 	# A trigger runs as its configured `run_as` user (falling back to the owner)
-	original_user = frappe.session.user
-	frappe.set_user(t.run_as or t.owner)
-	try:
+	with _acting_as(t.run_as or t.owner):
 		doc = None
 		if target_doctype and target_name:
 			try:
@@ -121,8 +139,12 @@ def fire(
 			if t.condition and not _eval_condition(t.condition, doc):
 				return None
 
+		# t.prompt_template is authored by a System Manager (the only role that can write a Flow
+		# Trigger) and validated against Jinja's SandboxedEnvironment on save; frappe.render_template
+		# renders in frappe's sandboxed environment too.
+		# nosemgrep: frappe-ssti -- System Manager-authored template, sandboxed Jinja
 		prompt = frappe.render_template(t.prompt_template, {"doc": doc, "now": frappe.utils.now_datetime()})
-		agent_doc = frappe.get_doc("Flow Agent", t.agent)
+		agent_doc = cast("FlowAgent", frappe.get_doc("Flow Agent", t.agent))
 		run = agent_doc.run(
 			prompt,
 			source="Trigger",
@@ -132,5 +154,3 @@ def fire(
 			auto_approve=bool(t.auto_approve),
 		)
 		return run.name
-	finally:
-		frappe.set_user(original_user)

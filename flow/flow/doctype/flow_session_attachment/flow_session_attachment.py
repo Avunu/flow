@@ -4,13 +4,17 @@
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import frappe
 from frappe import _
 from frappe.model.document import Document
 
 from flow.knowledge.extract import FILE_EXTENSIONS, extract_file
+
+if TYPE_CHECKING:
+	from frappe.core.doctype.file.file import File
+	from frappe.utils.redis_wrapper import RedisWrapper
 
 # Extracted text is staged here between upload and send, so it survives without a
 # session (the child row can only be written once the session exists, at send time).
@@ -43,7 +47,7 @@ def extract_attachment(file: str) -> dict[str, Any]:
 	"""Validate and extract text from an uploaded File. Raises (so errors surface at
 	upload time) if the caller doesn't own the file, the type is unsupported, or no
 	text can be read. Returns the fields needed to write an attachment row."""
-	file_doc = frappe.get_doc("File", file)
+	file_doc = cast("File", frappe.get_doc("File", file))
 	if not frappe.has_permission("File", "read", doc=file_doc):
 		frappe.throw(_("Not permitted to use this file."), frappe.PermissionError)
 
@@ -63,6 +67,14 @@ def extract_attachment(file: str) -> dict[str, Any]:
 	}
 
 
+def _cache() -> RedisWrapper:
+	"""The site cache, which frappe.init sets and the framework types as optional."""
+	cache = frappe.cache
+	if cache is None:
+		raise RuntimeError("frappe.init has not run: there is no site cache")
+	return cache
+
+
 def _cache_key(file: str) -> str:
 	return f"{CACHE_PREFIX}:{frappe.session.user}:{file}"
 
@@ -71,13 +83,13 @@ def stage_attachment(file: str) -> dict[str, Any]:
 	"""Extract at upload time and cache the result, so send can write the child row
 	without re-parsing. Returns lightweight metadata for the composer chip."""
 	data = extract_attachment(file)
-	frappe.cache.set_value(_cache_key(file), data, expires_in_sec=CACHE_TTL)
+	_cache().set_value(_cache_key(file), data, expires_in_sec=CACHE_TTL)
 	return {"file": data["file"], "file_name": data["file_name"], "file_size": data["file_size"]}
 
 
 def staged_attachment(file: str) -> dict[str, Any] | None:
 	"""Read the extraction staged at upload time. None if it has expired."""
-	return frappe.cache.get_value(_cache_key(file))
+	return _cache().get_value(_cache_key(file))
 
 
 def resolve_attachment(file: str) -> dict[str, Any]:

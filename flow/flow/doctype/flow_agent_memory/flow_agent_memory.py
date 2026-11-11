@@ -51,4 +51,4 @@ class FlowAgentMemory(Document):
 	def on_trash(self):
 		from flow.memory import store
 
-		store.remove(self.name)
+		store.remove(str(self.name))

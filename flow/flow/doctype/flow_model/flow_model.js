@@ -20,9 +20,10 @@ frappe.ui.form.on("Flow Model", {
 			frappe.dom.freeze(__("Testing connection…"));
 			try {
 				const r = await frm.call("test_connection");
-				if (r && r.message && r.message.ok) {
+				const result = /** @type {{ ok?: boolean, message?: string } | undefined} */ (r?.message);
+				if (result?.ok) {
 					frappe.show_alert({
-						message: r.message.message || __("Connection OK"),
+						message: result.message || __("Connection OK"),
 						indicator: "green",
 					});
 				}
@@ -37,8 +38,9 @@ frappe.ui.form.on("Flow Model", {
 	},
 });
 
+/** @param {frappe.ui.form.Form<"Flow Model">} frm */
 function load_provider_models(frm) {
-	const field = frm.fields_dict.model_id;
+	const field = /** @type {frappe.ui.form.ControlAutocomplete} */ (frm.fields_dict.model_id);
 	// Suggestions are hints, never a restriction — allow any typed model_id.
 	field.df.ignore_validation = true;
 	if (!frm.doc.provider) {

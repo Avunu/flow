@@ -24,7 +24,8 @@ def _ensure_kb(title: str, description: str | None) -> str:
 		frappe.throw(_("Knowledge base title is required."), title=_("Invalid Knowledge Base"))
 	if frappe.db.exists(KB_DOCTYPE, title):
 		return title
-	return frappe.get_doc({"doctype": KB_DOCTYPE, "title": title, "description": description}).insert().name
+	kb = frappe.get_doc({"doctype": KB_DOCTYPE, "title": title, "description": description}).insert()
+	return str(kb.name)
 
 
 def _snippet(content: str) -> str:
@@ -44,8 +45,9 @@ class Knowledge:
 		source = frappe.get_doc({"doctype": SOURCE_DOCTYPE, "knowledge_base": self.name, **fields})
 		source.flags.skip_auto_ingest = True
 		source.insert()
-		ingest_source(source.name)
-		return source.name
+		name = str(source.name)
+		ingest_source(name)
+		return name
 
 	def add_text(self, content: str, *, title: str | None = None) -> str:
 		return self._ingest(source_type="Text", title=title or _snippet(content), content=content)
@@ -59,6 +61,9 @@ class Knowledge:
 		from flow.knowledge.extract import _extract_by_extension
 
 		extension = os.path.splitext(path)[1].lower().lstrip(".")
+		# A developer API: the path is chosen by the Python caller (console, script), never by a
+		# request. Knowledge is not whitelisted and is not in the `execute` sandbox's namespace.
+		# nosemgrep: frappe-security-file-traversal -- caller-chosen path, see above
 		with open(path, "rb") as handle:
 			text = _extract_by_extension(handle.read(), extension)
 		return self.add_text(text, title=title or os.path.basename(path))

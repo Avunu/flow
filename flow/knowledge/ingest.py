@@ -16,9 +16,14 @@ derived index keyed by chunk name.
 from __future__ import annotations
 
 import hashlib
+from typing import TYPE_CHECKING, cast
 
 import frappe
 from frappe.utils import cint, now_datetime
+
+if TYPE_CHECKING:
+	from flow.flow.doctype.flow_knowledge_settings.flow_knowledge_settings import FlowKnowledgeSettings
+	from flow.flow.doctype.flow_knowledge_source.flow_knowledge_source import FlowKnowledgeSource
 
 CHUNK_DOCTYPE = "Flow Knowledge Chunk"
 BATCH = 500
@@ -62,7 +67,7 @@ def purge_source(source: str) -> None:
 	frappe.db.delete(CHUNK_DOCTYPE, {"source": source})
 
 
-def _chunk_params(doc, settings) -> tuple[int, int]:
+def _chunk_params(doc: FlowKnowledgeSource, settings: FlowKnowledgeSettings) -> tuple[int, int]:
 	"""Per-source chunk size/overlap, each falling back to the global default when 0."""
 	size = cint(doc.chunk_size) or cint(settings.chunk_size)
 	overlap = cint(doc.chunk_overlap) or cint(settings.chunk_overlap)
@@ -72,7 +77,7 @@ def _chunk_params(doc, settings) -> tuple[int, int]:
 # --- single-document sources (Text / File / URL) -----------------------------
 
 
-def _rebuild_single(doc, settings) -> None:
+def _rebuild_single(doc: FlowKnowledgeSource, settings: FlowKnowledgeSettings) -> None:
 	"""Re-extract, chunk, embed, and replace all chunks for a single-doc source."""
 	from flow.knowledge import store
 	from flow.knowledge.chunker import chunk_text
@@ -84,7 +89,7 @@ def _rebuild_single(doc, settings) -> None:
 	for extracted in extract(doc):
 		pieces.extend(chunk_text(extracted.text, chunk_size=size, overlap=overlap))
 
-	purge_source(doc.name)
+	purge_source(str(doc.name))
 	if not pieces:
 		return
 
@@ -104,7 +109,7 @@ def _rebuild_single(doc, settings) -> None:
 		).insert(ignore_permissions=True)
 		rows.append(
 			{
-				"id": int(chunk_doc.name),
+				"id": int(str(chunk_doc.name)),
 				"kb": doc.knowledge_base,
 				"source": doc.name,
 				"content": piece,
@@ -115,7 +120,7 @@ def _rebuild_single(doc, settings) -> None:
 	store.add(rows)
 
 
-def _embed_and_insert(doc, settings, to_embed) -> None:
+def _embed_and_insert(doc: FlowKnowledgeSource, settings: FlowKnowledgeSettings, to_embed) -> None:
 	from flow.knowledge import store
 	from flow.knowledge.embedder import embed_texts
 
@@ -145,7 +150,7 @@ def _embed_and_insert(doc, settings, to_embed) -> None:
 			).insert(ignore_permissions=True)
 			rows.append(
 				{
-					"id": int(chunk_doc.name),
+					"id": int(str(chunk_doc.name)),
 					"kb": doc.knowledge_base,
 					"source": doc.name,
 					"content": piece,
@@ -240,12 +245,12 @@ def _remove_stale(doc, ref, watermark, matched_refs) -> None:
 # --- DocType sources (incremental) -------------------------------------------
 
 
-def _sync_doctype(doc, settings) -> None:
+def _sync_doctype(doc: FlowKnowledgeSource, settings: FlowKnowledgeSettings) -> None:
 	"""Watermark sweep: upsert changed rows (hash-gated), then remove rows that
 	were deleted or fell out of the filter since the last sweep."""
 	from flow.knowledge.extract import _parse_filters, resolve_content_fields
 
-	ref = doc.reference_doctype
+	ref = doc.reference_doctype or ""
 	meta = frappe.get_meta(ref)
 	fields = resolve_content_fields(meta, doc.content_fields)
 	user_filters = _parse_filters(doc.filters)
@@ -278,6 +283,21 @@ def _sync_doctype(doc, settings) -> None:
 	doc.db_set("last_synced_at", sweep_start, update_modified=False)
 
 
+def _commit_source_status() -> None:
+	"""Commit a source's status row from inside the ingestion worker.
+
+	The worker needs this at two points. When it marks the source Processing, the status is
+	visible while the (long) ingestion runs and the row lock is released instead of blocking
+	edits to the source until the job ends; everything after that commit is the ingestion's
+	own work, which the failure path can roll back on its own. When it marks the source
+	Failed, the exception ingest_source re-raises makes the job runner roll back the
+	transaction, and the failure would be lost.
+
+	A successful run needs no commit: the job runner commits when the job returns.
+	"""
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit -- worker status boundary, see the docstring
+
+
 def _mark_failed(source: str) -> None:
 	error = frappe.get_traceback(with_context=True)
 	frappe.db.set_value(
@@ -286,7 +306,7 @@ def _mark_failed(source: str) -> None:
 		{"status": "Failed", "error_log": error},
 		update_modified=False,
 	)
-	frappe.db.commit()
+	_commit_source_status()
 
 
 def ingest_source(source: str, rebuild: bool = False) -> None:
@@ -294,16 +314,19 @@ def ingest_source(source: str, rebuild: bool = False) -> None:
 
 	rebuild forces a full re-chunk of a DocType source (purge + reset watermark) so
 	new chunk settings apply to rows whose content is otherwise unchanged. Single-doc
-	sources rebuild on every run regardless."""
-	doc = frappe.get_doc("Flow Knowledge Source", source)
+	sources rebuild on every run regardless.
+
+	The job runner commits a successful run; a direct caller commits (or rolls back) its own
+	transaction."""
+	doc = cast("FlowKnowledgeSource", frappe.get_doc("Flow Knowledge Source", source))
 	doc.db_set("status", "Processing", update_modified=False)
-	frappe.db.commit()
+	_commit_source_status()
 
 	try:
-		settings = frappe.get_cached_doc("Flow Knowledge Settings")
+		settings = cast("FlowKnowledgeSettings", frappe.get_cached_doc("Flow Knowledge Settings"))
 		if doc.source_type == "DocType":
 			if rebuild:
-				purge_source(doc.name)
+				purge_source(str(doc.name))
 				doc.db_set("last_synced_at", None, update_modified=False)
 			_sync_doctype(doc, settings)
 		else:
@@ -318,7 +341,6 @@ def ingest_source(source: str, rebuild: bool = False) -> None:
 		{"status": "Completed", "chunk_count": count, "error_log": None},
 		update_modified=False,
 	)
-	frappe.db.commit()
 
 
 def _existing_names(doctype: str, names: set[str]) -> set[str]:
@@ -339,7 +361,7 @@ def reconcile_source(source: str) -> None:
 	"""Purge chunks whose reference row no longer exists. Full scan — cleans up after
 	hard deletes that left no tombstone (delete_permanently, raw SQL). Expensive, so it
 	is triggered manually, never on the sweep."""
-	doc = frappe.get_doc("Flow Knowledge Source", source)
+	doc = cast("FlowKnowledgeSource", frappe.get_doc("Flow Knowledge Source", source))
 	if doc.source_type != "DocType":
 		return
 
@@ -350,7 +372,7 @@ def reconcile_source(source: str) -> None:
 	if not indexed:
 		return
 
-	orphaned = list(indexed - _existing_names(doc.reference_doctype, indexed))
+	orphaned = list(indexed - _existing_names(doc.reference_doctype or "", indexed))
 	if orphaned:
 		_purge_refs(source, orphaned)
 		count = frappe.db.count(CHUNK_DOCTYPE, {"source": source})

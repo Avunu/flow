@@ -5,7 +5,7 @@
 name = "flow-tools"
 version = "0"
 requires-python = ">=3.14"
-dependencies = ["actionlint-py", "committed", "prek", "ruff", "semgrep", "shellcheck-py", "zizmor"]
+dependencies = ["actionlint-py", "committed", "prek", "ruff", "semgrep", "shellcheck-py", "ty", "zizmor"]
 
 [tool.uv]
 package = false

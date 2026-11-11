@@ -7,12 +7,19 @@ readme = "README.md"
 license = "AGPL-3.0-or-later"
 dynamic = ["version"]
 dependencies = [
-	"litellm>=1.83.0,<1.83.8",
-	"lancedb<1,>=0.33",
-	"python-docx<2,>=1.1",
-	"pdfplumber<1,>=0.11",
-	"rapidocr<4,>=3",
-	"onnxruntime<2,>=1.27",
+	"beautifulsoup4>=4.12,<5",
+	"chardet>=5,<6",
+	"croniter>=6",
+	"lancedb>=0.41,<1",
+	"litellm>=1.109,<2",
+	"onnxruntime>=1.31,<2",
+	"openpyxl>=3.1,<4",
+	"pdfplumber>=0.11.10,<1",
+	"pyarrow>=23",
+	"pydantic>=2.7,<3",
+	"python-docx>=1.2,<2",
+	"rapidocr>=3.10,<4",
+	"requests>=2.32,<3",
 ]
 
 [build-system]
@@ -24,7 +31,8 @@ frappe = ">=16.0.0,<17.0.0"
 
 # These dependencies are only installed when developer mode is enabled
 [tool.bench.dev-dependencies]
-# package_name = "~=1.1.0"
+pillow = ">=11"
+pypdf = ">=6,<7"
 
 # These apt dependencies will be installed from Ubuntu repositories when you host your app on Frappe Cloud
 [deploy.dependencies.apt]
@@ -76,17 +84,6 @@ enable = false
 [tool.frappe-nix.demo]
 enable = false
 
-# Temporary, removed in PR B: the lint gate's scan of frappe's semgrep rules reports 29 findings and
-# the test-correctness scan 4 (assertRaises(Exception)); neither has a baseline yet.
-[tool.frappe-nix.semgrep]
-frappe-rules = false
-test-correctness = false
-
-# Temporary, removed in PR B: ty reports 696 diagnostics (157 in the app, 539 in the tests, mostly
-# frappe.get_doc returning a generic Document), so its stage in frappe-test is off until they are fixed.
-[tool.frappe-nix.python-types]
-enable = false
-
 [tool.coverage.run]
 omit = ["*/tests/*", "*/test_*.py", "*/patches/*"]
 
@@ -108,15 +105,17 @@ whitelist = ["frappe.*"]
 [tool.frappe-nix.js.oxfmt]
 ignore = ["**/*.html"]
 
-# Findings in the existing Vue panel that have no safe autofix. Each is a small rewrite
-# (or a deliberate choice) left for a later change, so the rules are off for just that file.
+# Findings in the Vue panel that stay on purpose, so the rule is off for just that file: main.js
+# imports its stylesheet for the side effect; store.js copies before it reverses and spreads into a
+# fresh record per question; MarkdownText.vue copies a live node list before it removes from it;
+# stream.js reads the response one chunk at a time.
 [[tool.frappe-nix.js.oxlint.overrides]]
 files = ["frontend/src/main.js"]
-rules = { "import/no-unassigned-import" = "off", "eslint/no-unused-expressions" = "off" }
+rules = { "import/no-unassigned-import" = "off" }
 
 [[tool.frappe-nix.js.oxlint.overrides]]
 files = ["frontend/src/store.js"]
-rules = { "eslint/no-shadow" = "off", "unicorn/no-array-reverse" = "off", "oxc/no-map-spread" = "off" }
+rules = { "unicorn/no-array-reverse" = "off", "oxc/no-map-spread" = "off" }
 
 [[tool.frappe-nix.js.oxlint.overrides]]
 files = ["frontend/src/components/MarkdownText.vue"]
@@ -126,43 +125,24 @@ rules = { "unicorn/no-useless-spread" = "off" }
 files = ["frontend/src/api/stream.js"]
 rules = { "eslint/no-await-in-loop" = "off" }
 
-# Desk scripts that strict checkJs reports on today. Typing them (JSDoc) is the next PR's work, and
-# the list only shrinks from here.
+# A declaration file that augments a module has to be a module itself, and the bare import is what
+# makes it one.
+[[tool.frappe-nix.js.oxlint.overrides]]
+files = ["types/**"]
+rules = { "import/no-unassigned-import" = "off" }
 
-[[tool.frappe-nix.unchecked-js]]
-path = "flow/flow/doctype/flow_knowledge_source/flow_knowledge_source.js"
-reason = "Not yet typed with JSDoc; checkJs reports errors"
+# The panel is a Vue SPA in JavaScript: vue-tsc runs checkJs over the components and scripts.
+[[tool.frappe-nix.typescript.spa]]
+root = "frontend"
+include = ["frontend/src/**"]
+tsconfig = "frontend/tsconfig.json"
+check = "node scripts/vue-tsc.cjs --noEmit -p frontend/tsconfig.json"
 
-[[tool.frappe-nix.unchecked-js]]
-path = "flow/flow/doctype/flow_model/flow_model.js"
-reason = "Not yet typed with JSDoc; checkJs reports errors"
+[tool.ty.environment]
+python-version = "3.14"
 
-[[tool.frappe-nix.unchecked-js]]
-path = "flow/flow/doctype/flow_run/flow_run.js"
-reason = "Not yet typed with JSDoc; checkJs reports errors"
+[tool.ty.src]
+include = ["flow"]
 
-[[tool.frappe-nix.unchecked-js]]
-path = "flow/flow/doctype/flow_session/flow_session.js"
-reason = "Not yet typed with JSDoc; checkJs reports errors"
-
-# Whitelisted methods with no test yet. Writing them is the next PR's work, and the list only shrinks.
-
-[[tool.frappe-nix.untested]]
-target = "flow.api.api.stop_run"
-reason = "Not yet tested; a test is the next PR's work"
-
-[[tool.frappe-nix.untested]]
-target = "flow.api.api.get_agent_tools"
-reason = "Not yet tested; a test is the next PR's work"
-
-[[tool.frappe-nix.untested]]
-target = "flow.flow.doctype.flow_knowledge_source.flow_knowledge_source.FlowKnowledgeSource.reconcile"
-reason = "Not yet tested; a test is the next PR's work"
-
-[[tool.frappe-nix.untested]]
-target = "flow.flow.doctype.flow_model.flow_model.FlowModel.test_connection"
-reason = "Not yet tested; a test is the next PR's work"
-
-[[tool.frappe-nix.untested]]
-target = "flow.flow.doctype.flow_model.flow_model.get_provider_models"
-reason = "Not yet tested; a test is the next PR's work"
+[tool.ty.terminal]
+error-on-warning = true

@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 import frappe
 from frappe import _
@@ -13,8 +13,10 @@ from frappe.model.document import Document
 from flow.utils.system_generated import block_delete, block_rename, validate_immutable
 
 if TYPE_CHECKING:
-	from flow.flow.doctype.flow_run.flow_run import FlowRun
-	from flow.lib.agent import Agent, Event
+	from flow.flow.doctype.flow_run.flow_run import FlowRun, StreamEvent
+	from flow.flow.doctype.flow_session.flow_session import FlowSession
+	from flow.flow.doctype.flow_tool.flow_tool import FlowTool
+	from flow.lib.agent import Agent
 	from flow.lib.tool import Tool
 
 DEFAULT_TOOL_SLUGS = ("describe", "read", "execute")
@@ -98,7 +100,7 @@ class FlowAgent(Document):
 
 		return Agent(
 			model=Model(model_name),
-			name=self.name,
+			name=str(self.name),
 			instructions=self.instructions,
 			tools=self._resolve_tools(),
 			max_iterations=self.max_iterations or DEFAULT_MAX_ITERATIONS,
@@ -111,7 +113,7 @@ class FlowAgent(Document):
 		resolved: list[Tool] = []
 		for row in self.tools:
 			try:
-				tool_doc = frappe.get_doc("Flow Tool", row.tool)
+				tool_doc = cast("FlowTool", frappe.get_doc("Flow Tool", row.tool))
 			except frappe.DoesNotExistError:
 				frappe.log_error(title=f"Flow Agent {self.name!r}: tool {row.tool!r} not found, skipping")
 				continue
@@ -120,16 +122,44 @@ class FlowAgent(Document):
 			if tool_doc.name == KNOWLEDGE_SEARCH_SLUG:
 				resolved.append(bind_search_knowledge([kb.knowledge_base for kb in self.knowledge_bases]))
 			elif tool_doc.name == MEMORY_TOOL_SLUG:
-				resolved.append(bind_update_memory(self.name))
+				resolved.append(bind_update_memory(str(self.name)))
 			else:
 				resolved.append(tool_doc.to_tool())
 		return resolved
 
-	def new_session(self, *, model: str | None = None, title: str | None = None):
+	def new_session(self, *, model: str | None = None, title: str | None = None) -> FlowSession:
 		"""Start a conversation driven by this agent. Returns an FlowSession doc with runtime attached."""
 		from flow.lib.session import new_session
 
 		return new_session(self, model=model, title=title)
+
+	@overload
+	def run(
+		self,
+		input: str,
+		*,
+		session: str | None = None,
+		source: str = "Manual",
+		trigger: str | None = None,
+		reference_doctype: str | None = None,
+		reference_name: str | None = None,
+		auto_approve: bool = False,
+		stream: Literal[False] = False,
+	) -> FlowRun: ...
+
+	@overload
+	def run(
+		self,
+		input: str,
+		*,
+		session: str | None = None,
+		source: str = "Manual",
+		trigger: str | None = None,
+		reference_doctype: str | None = None,
+		reference_name: str | None = None,
+		auto_approve: bool = False,
+		stream: Literal[True],
+	) -> Generator[StreamEvent]: ...
 
 	def run(
 		self,
@@ -142,12 +172,22 @@ class FlowAgent(Document):
 		reference_name: str | None = None,
 		auto_approve: bool = False,
 		stream: bool = False,
-	) -> FlowRun | Generator[Event]:
+	) -> FlowRun | Generator[StreamEvent]:
 		"""Run `input` and persist as a Flow Run. Convenience wrapper over the session API:
 		starts a conversation (or continues `session`) and calls `chat()`."""
 		from flow.lib.session import load_session, new_session
 
 		convo = load_session(session, agent=self.name) if session else new_session(self, source=source)
+		if stream:
+			return convo.chat(
+				input,
+				source=source,
+				trigger=trigger,
+				reference_doctype=reference_doctype,
+				reference_name=reference_name,
+				auto_approve=auto_approve,
+				stream=True,
+			)
 		return convo.chat(
 			input,
 			source=source,
@@ -155,7 +195,6 @@ class FlowAgent(Document):
 			reference_doctype=reference_doctype,
 			reference_name=reference_name,
 			auto_approve=auto_approve,
-			stream=stream,
 		)
 
 	def _snapshot(self, *, model: str | None = None) -> dict[str, Any]:

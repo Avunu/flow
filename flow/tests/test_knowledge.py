@@ -3,11 +3,19 @@
 
 import json
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import patch
 
 import frappe
+from frappe.core.doctype.file.file import File
+from frappe.desk.doctype.todo.todo import ToDo
 from frappe.tests import IntegrationTestCase
 
+from flow.flow.doctype.flow_knowledge_base.flow_knowledge_base import FlowKnowledgeBase
+from flow.flow.doctype.flow_knowledge_chunk.flow_knowledge_chunk import FlowKnowledgeChunk
+from flow.flow.doctype.flow_knowledge_settings.flow_knowledge_settings import FlowKnowledgeSettings
+from flow.flow.doctype.flow_knowledge_source.flow_knowledge_source import FlowKnowledgeSource
+from flow.flow.doctype.flow_model.flow_model import FlowModel
 from flow.knowledge import Knowledge, attachment_store, store
 from flow.knowledge.chunker import chunk_text
 from flow.knowledge.embedder import embed_texts, probe_dimension
@@ -22,6 +30,7 @@ from flow.knowledge.extract import (
 	extract,
 )
 from flow.knowledge.ingest import (
+	enqueue_reconciliation,
 	ingest_source,
 	purge_source,
 	reconcile_source,
@@ -164,9 +173,18 @@ def _embedding_response(vectors, shuffle=False):
 
 def _make_model(title="Embed Model", model_id="openai/text-embedding-3-small"):
 	if frappe.db.exists("Flow Model", title):
-		return frappe.get_doc("Flow Model", title)
-	return frappe.get_doc(
-		{"doctype": "Flow Model", "title": title, "model_id": model_id, "api_key": "sk-test", "enabled": 1}
+		return cast(FlowModel, frappe.get_doc("Flow Model", title))
+	return cast(
+		FlowModel,
+		frappe.get_doc(
+			{
+				"doctype": "Flow Model",
+				"title": title,
+				"model_id": model_id,
+				"api_key": "sk-test",
+				"enabled": 1,
+			}
+		),
 	).insert()
 
 
@@ -250,30 +268,38 @@ class TestKnowledgeSettings(IntegrationTestCase):
 		frappe.db.rollback()
 
 	def _save_settings(self, **values):
-		settings = frappe.get_doc("Flow Knowledge Settings")
+		settings = cast(FlowKnowledgeSettings, frappe.get_doc("Flow Knowledge Settings"))
 		settings.update(values)
 		settings.save()
 		return settings
 
 	def _make_chunk(self):
-		kb = frappe.get_doc({"doctype": "Flow Knowledge Base", "title": "Settings KB"}).insert()
-		source = frappe.get_doc(
-			{
-				"doctype": "Flow Knowledge Source",
-				"knowledge_base": kb.name,
-				"source_type": "Text",
-				"title": "Settings Source",
-				"content": "hello",
-			}
+		kb = cast(
+			FlowKnowledgeBase, frappe.get_doc({"doctype": "Flow Knowledge Base", "title": "Settings KB"})
 		).insert()
-		return frappe.get_doc(
-			{
-				"doctype": "Flow Knowledge Chunk",
-				"knowledge_base": kb.name,
-				"source": source.name,
-				"chunk_index": 0,
-				"content": "hello",
-			}
+		source = cast(
+			FlowKnowledgeSource,
+			frappe.get_doc(
+				{
+					"doctype": "Flow Knowledge Source",
+					"knowledge_base": kb.name,
+					"source_type": "Text",
+					"title": "Settings Source",
+					"content": "hello",
+				}
+			),
+		).insert()
+		return cast(
+			FlowKnowledgeChunk,
+			frappe.get_doc(
+				{
+					"doctype": "Flow Knowledge Chunk",
+					"knowledge_base": kb.name,
+					"source": source.name,
+					"chunk_index": 0,
+					"content": "hello",
+				}
+			),
 		).insert()
 
 	def test_save_probes_dimension(self):
@@ -314,7 +340,7 @@ class TestKnowledgeSettings(IntegrationTestCase):
 		with patch("flow.knowledge.embedder.probe_dimension", return_value=1536):
 			self._save_settings(embedding_model=self.model.name)
 		self._make_chunk()
-		settings = frappe.get_doc("Flow Knowledge Settings")
+		settings = cast(FlowKnowledgeSettings, frappe.get_doc("Flow Knowledge Settings"))
 		settings.embedding_model = self.alt_model.name
 		settings.flags.allow_embedding_model_change = True
 		with patch("flow.knowledge.embedder.probe_dimension", return_value=3072):
@@ -386,15 +412,19 @@ class TestExtract(IntegrationTestCase):
 		self.assertEqual(extract(frappe._dict(source_type="Text", content="   ")), [])
 
 	def test_file_source_reads_text_file(self):
-		file_doc = frappe.get_doc(
-			{"doctype": "File", "file_name": "note.txt", "content": "file body", "is_private": 1}
+		file_doc = cast(
+			File,
+			frappe.get_doc(
+				{"doctype": "File", "file_name": "note.txt", "content": "file body", "is_private": 1}
+			),
 		).insert()
 		docs = extract(frappe._dict(source_type="File", file=file_doc.file_url))
 		self.assertEqual(docs[0].text, "file body")
 
 	def test_file_source_rejects_unsupported_format(self):
-		file_doc = frappe.get_doc(
-			{"doctype": "File", "file_name": "data.bin", "content": "x", "is_private": 1}
+		file_doc = cast(
+			File,
+			frappe.get_doc({"doctype": "File", "file_name": "data.bin", "content": "x", "is_private": 1}),
 		).insert()
 		with self.assertRaisesRegex(frappe.ValidationError, "Unsupported file format"):
 			extract(frappe._dict(source_type="File", file=file_doc.file_url))
@@ -579,7 +609,9 @@ class TestIngest(IntegrationTestCase):
 			chunk_size=60,
 			chunk_overlap=10,
 		)
-		self.kb = frappe.get_doc({"doctype": "Flow Knowledge Base", "title": "Ingest KB"}).insert()
+		self.kb = cast(
+			FlowKnowledgeBase, frappe.get_doc({"doctype": "Flow Knowledge Base", "title": "Ingest KB"})
+		).insert()
 
 	def tearDown(self):
 		store.drop_table()
@@ -589,8 +621,11 @@ class TestIngest(IntegrationTestCase):
 		values.setdefault("source_type", "Text")
 		values.setdefault("title", "Ingest Source")
 		with patch("flow.knowledge.ingest.enqueue_ingestion"):
-			return frappe.get_doc(
-				{"doctype": "Flow Knowledge Source", "knowledge_base": self.kb.name, **values}
+			return cast(
+				FlowKnowledgeSource,
+				frappe.get_doc(
+					{"doctype": "Flow Knowledge Source", "knowledge_base": self.kb.name, **values}
+				),
 			).insert()
 
 	def _ingest(self, source_name):
@@ -675,6 +710,48 @@ class TestIngest(IntegrationTestCase):
 		self.assertEqual(source.status, "Failed")
 		self.assertIn("non-public", source.error_log or "")
 
+	def _ingest_recording(self, source_name):
+		"""Run ingest_source, recording (event, source status) at each commit and rollback."""
+		events = []
+
+		def record(event):
+			def side_effect(*args, **kwargs):
+				events.append((event, frappe.db.get_value("Flow Knowledge Source", source_name, "status")))
+
+			return side_effect
+
+		def fake(input, **kwargs):
+			return _embedding_response([[0.1, 0.2, 0.3, 0.4]] * len(input))
+
+		try:
+			with (
+				patch("litellm.embedding", side_effect=fake),
+				patch.object(frappe.db, "commit", side_effect=record("commit")),
+				patch.object(frappe.db, "rollback", side_effect=record("rollback")),
+			):
+				ingest_source(source_name)
+		finally:
+			self.events = events
+
+	def test_success_commits_only_the_processing_status(self):
+		# The job runner commits a successful run, so ingest_source adds no commit of its own.
+		source = self._make_source(content="Reset your password from the account settings page. " * 4)
+		self._ingest_recording(source.name)
+
+		self.assertEqual(self.events, [("commit", "Processing")])
+		source.reload()
+		self.assertEqual(source.status, "Completed")
+
+	def test_failure_rolls_back_then_commits_the_failed_status(self):
+		# The re-raised exception makes the job runner roll back, so Failed is committed first.
+		source = self._make_source(source_type="URL", url="http://127.0.0.1/secret")
+		with self.assertRaises(frappe.ValidationError):
+			self._ingest_recording(source.name)
+
+		self.assertEqual(
+			self.events, [("commit", "Processing"), ("rollback", "Processing"), ("commit", "Failed")]
+		)
+
 	def test_purge_source_is_safe_when_empty(self):
 		source = self._make_source(content="never ingested")
 		purge_source(source.name)
@@ -682,14 +759,17 @@ class TestIngest(IntegrationTestCase):
 
 	def test_after_insert_enqueues_ingestion(self):
 		with patch("flow.knowledge.ingest.enqueue_ingestion") as mock:
-			source = frappe.get_doc(
-				{
-					"doctype": "Flow Knowledge Source",
-					"knowledge_base": self.kb.name,
-					"source_type": "Text",
-					"title": "Auto Ingest",
-					"content": "indexed on creation",
-				}
+			source = cast(
+				FlowKnowledgeSource,
+				frappe.get_doc(
+					{
+						"doctype": "Flow Knowledge Source",
+						"knowledge_base": self.kb.name,
+						"source_type": "Text",
+						"title": "Auto Ingest",
+						"content": "indexed on creation",
+					}
+				),
 			).insert()
 		mock.assert_called_once_with(source.name)
 
@@ -721,6 +801,22 @@ class TestIngest(IntegrationTestCase):
 			source.resync(rebuild=True)
 		mock.assert_called_once_with(source.name, rebuild=True)
 
+	def test_reconcile_enqueues_reconciliation(self):
+		source = self._make_source(content="Reset your password from the account settings page. " * 4)
+		with patch("flow.knowledge.ingest.enqueue_reconciliation") as mock:
+			source.reconcile()
+		mock.assert_called_once_with(source.name)
+
+	def test_enqueue_reconciliation_queues_the_job_after_commit(self):
+		with patch("frappe.enqueue") as enqueue:
+			enqueue_reconciliation("a-source")
+		enqueue.assert_called_once_with(
+			"flow.knowledge.ingest.reconcile_source",
+			queue="long",
+			enqueue_after_commit=True,
+			source="a-source",
+		)
+
 
 class TestDoctypeSync(IntegrationTestCase):
 	def setUp(self):
@@ -732,28 +828,33 @@ class TestDoctypeSync(IntegrationTestCase):
 			chunk_size=200,
 			chunk_overlap=20,
 		)
-		self.kb = frappe.get_doc({"doctype": "Flow Knowledge Base", "title": "Sync KB"}).insert()
+		self.kb = cast(
+			FlowKnowledgeBase, frappe.get_doc({"doctype": "Flow Knowledge Base", "title": "Sync KB"})
+		).insert()
 
 	def tearDown(self):
 		store.drop_table()
 		frappe.db.rollback()
 
 	def _todo(self, description, **values):
-		return frappe.get_doc({"doctype": "ToDo", "description": description, **values}).insert()
+		return cast(ToDo, frappe.get_doc({"doctype": "ToDo", "description": description, **values})).insert()
 
 	def _source(self, filters=None):
 		filters = filters or {"description": ["like", "SYNCTEST%"]}
 		with patch("flow.knowledge.ingest.enqueue_ingestion"):
-			return frappe.get_doc(
-				{
-					"doctype": "Flow Knowledge Source",
-					"knowledge_base": self.kb.name,
-					"source_type": "DocType",
-					"title": "ToDo Source",
-					"reference_doctype": "ToDo",
-					"content_fields": "description",
-					"filters": json.dumps(filters),
-				}
+			return cast(
+				FlowKnowledgeSource,
+				frappe.get_doc(
+					{
+						"doctype": "Flow Knowledge Source",
+						"knowledge_base": self.kb.name,
+						"source_type": "DocType",
+						"title": "ToDo Source",
+						"reference_doctype": "ToDo",
+						"content_fields": "description",
+						"filters": json.dumps(filters),
+					}
+				),
 			).insert()
 
 	def _sync(self, source_name):
@@ -893,15 +994,18 @@ class TestDoctypeSync(IntegrationTestCase):
 		auto.db_set("auto_sync", 1, update_modified=False)
 		manual = self._source()
 		with patch("flow.knowledge.ingest.enqueue_ingestion"):
-			text = frappe.get_doc(
-				{
-					"doctype": "Flow Knowledge Source",
-					"knowledge_base": self.kb.name,
-					"source_type": "Text",
-					"title": "Text Source",
-					"content": "not a doctype",
-					"auto_sync": 1,
-				}
+			text = cast(
+				FlowKnowledgeSource,
+				frappe.get_doc(
+					{
+						"doctype": "Flow Knowledge Source",
+						"knowledge_base": self.kb.name,
+						"source_type": "Text",
+						"title": "Text Source",
+						"content": "not a doctype",
+						"auto_sync": 1,
+					}
+				),
 			).insert()
 
 		with patch("flow.knowledge.ingest.enqueue_ingestion") as mock:
@@ -923,7 +1027,9 @@ class TestRetriever(IntegrationTestCase):
 			chunk_size=200,
 			chunk_overlap=20,
 		)
-		self.kb = frappe.get_doc({"doctype": "Flow Knowledge Base", "title": "Retrieve KB"}).insert()
+		self.kb = cast(
+			FlowKnowledgeBase, frappe.get_doc({"doctype": "Flow Knowledge Base", "title": "Retrieve KB"})
+		).insert()
 
 	def tearDown(self):
 		store.drop_table()
@@ -942,14 +1048,17 @@ class TestRetriever(IntegrationTestCase):
 
 	def _text_source(self, kb, content, title="Doc"):
 		with patch("flow.knowledge.ingest.enqueue_ingestion"):
-			source = frappe.get_doc(
-				{
-					"doctype": "Flow Knowledge Source",
-					"knowledge_base": kb,
-					"source_type": "Text",
-					"title": title,
-					"content": content,
-				}
+			source = cast(
+				FlowKnowledgeSource,
+				frappe.get_doc(
+					{
+						"doctype": "Flow Knowledge Source",
+						"knowledge_base": kb,
+						"source_type": "Text",
+						"title": title,
+						"content": content,
+					}
+				),
 			).insert()
 		self._ingest(source.name)
 		return source
@@ -974,7 +1083,9 @@ class TestRetriever(IntegrationTestCase):
 		self.assertEqual(self._retrieve("   ", kbs=[self.kb.name]), [])
 
 	def test_retrieve_excludes_other_knowledge_bases(self):
-		other = frappe.get_doc({"doctype": "Flow Knowledge Base", "title": "Other KB"}).insert()
+		other = cast(
+			FlowKnowledgeBase, frappe.get_doc({"doctype": "Flow Knowledge Base", "title": "Other KB"})
+		).insert()
 		mine = self._text_source(self.kb.name, "laptop onboarding steps. " * 4)
 		self._text_source(other.name, "laptop onboarding steps. " * 4, title="Other Doc")
 		results = self._retrieve("laptop", kbs=[self.kb.name])
@@ -1045,7 +1156,7 @@ class TestKnowledgeBuilder(IntegrationTestCase):
 		kb = Knowledge("Builder KB")
 		source_name = self._add_text(kb, "laptop setup guide for new employees. " * 4)
 
-		source = frappe.get_doc("Flow Knowledge Source", source_name)
+		source = cast(FlowKnowledgeSource, frappe.get_doc("Flow Knowledge Source", source_name))
 		self.assertEqual(source.source_type, "Text")
 		self.assertEqual(source.knowledge_base, kb.name)
 
@@ -1072,7 +1183,7 @@ class TestKnowledgeBuilder(IntegrationTestCase):
 		finally:
 			os.unlink(path)
 
-		source = frappe.get_doc("Flow Knowledge Source", source_name)
+		source = cast(FlowKnowledgeSource, frappe.get_doc("Flow Knowledge Source", source_name))
 		self.assertEqual(source.source_type, "Text")
 		self.assertEqual(source.title, os.path.basename(path))
 
@@ -1096,11 +1207,11 @@ class TestKnowledgeBuilder(IntegrationTestCase):
 				filters={"status": "Open"},
 			)
 
-		source = frappe.get_doc("Flow Knowledge Source", source_name)
+		source = cast(FlowKnowledgeSource, frappe.get_doc("Flow Knowledge Source", source_name))
 		self.assertEqual(source.source_type, "DocType")
 		self.assertEqual(source.reference_doctype, "ToDo")
 		self.assertEqual(source.content_fields, "description, status")
-		self.assertEqual(json.loads(source.filters), {"status": "Open"})
+		self.assertEqual(json.loads(source.filters or ""), {"status": "Open"})
 		ingest.assert_called_once_with(source_name)
 
 
@@ -1308,21 +1419,27 @@ class TestSystemGeneratedProtection(IntegrationTestCase):
 		frappe.db.rollback()
 
 	def _kb(self, system=True, title="Builtin KB"):
-		return frappe.get_doc(
-			{"doctype": "Flow Knowledge Base", "title": title, "is_system_generated": int(system)}
+		return cast(
+			FlowKnowledgeBase,
+			frappe.get_doc(
+				{"doctype": "Flow Knowledge Base", "title": title, "is_system_generated": int(system)}
+			),
 		).insert()
 
 	def _source(self, kb, system=True, **values):
 		values.setdefault("source_type", "Text")
 		values.setdefault("title", "Builtin Source")
 		values.setdefault("content", "some indexed content")
-		doc = frappe.get_doc(
-			{
-				"doctype": "Flow Knowledge Source",
-				"knowledge_base": kb.name,
-				"is_system_generated": int(system),
-				**values,
-			}
+		doc = cast(
+			FlowKnowledgeSource,
+			frappe.get_doc(
+				{
+					"doctype": "Flow Knowledge Source",
+					"knowledge_base": kb.name,
+					"is_system_generated": int(system),
+					**values,
+				}
+			),
 		)
 		doc.flags.skip_auto_ingest = True
 		return doc.insert()

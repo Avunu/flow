@@ -2,39 +2,68 @@
 # License: MIT. See LICENSE
 
 import json
-from typing import Any
+from collections.abc import Generator
+from typing import Any, Literal, overload
 
 from frappe.tests import UnitTestCase
 
 from flow.lib.agent import (
 	Agent,
 	Done,
+	Event,
 	Question,
 	RunResult,
 	TextChunk,
 	ToolEnded,
 	ToolStarted,
 )
-from flow.lib.model import ChatResponse, ToolCall
+from flow.lib.model import ChatResponse, Model, ToolCall, ToolCallBegin
 from flow.lib.tool import tool
 
 
-def _scripted_stream(text_parts: list[str], response: ChatResponse):
+def _scripted_stream(text_parts: list[str], response: ChatResponse) -> Generator[str, None, ChatResponse]:
 	for part in text_parts:
 		if part:
 			yield part
 	return response
 
 
-class FakeModel:
+class FakeModel(Model):
 	def __init__(self, responses: list[ChatResponse], streams: list[list[str]] | None = None):
 		"""`responses` are returned by chat(); `streams` (optional) are the text-delta
 		sequences yielded when stream=True, one list per call, indexed alongside responses."""
+		# No super().__init__: it resolves provider credentials, and a scripted model has none.
+		self.model_id = "fake/scripted"
 		self._responses = list(responses)
 		self._streams = list(streams) if streams is not None else [[r.content or ""] for r in responses]
 		self.calls: list[dict[str, Any]] = []
 
-	def chat(self, messages, tools=None, *, stream=False):
+	@overload
+	def chat(
+		self,
+		messages: str | list[dict[str, Any]],
+		tools: list[dict[str, Any]] | None = None,
+		*,
+		stream: Literal[False] = False,
+	) -> ChatResponse: ...
+
+	@overload
+	def chat(
+		self,
+		messages: str | list[dict[str, Any]],
+		tools: list[dict[str, Any]] | None = None,
+		*,
+		stream: Literal[True],
+	) -> Generator[str | ToolCallBegin, None, ChatResponse]: ...
+
+	def chat(
+		self,
+		messages: str | list[dict[str, Any]],
+		tools: list[dict[str, Any]] | None = None,
+		*,
+		stream: bool = False,
+	) -> ChatResponse | Generator[str | ToolCallBegin, None, ChatResponse]:
+		assert isinstance(messages, list)
 		self.calls.append({"messages": list(messages), "tools": tools, "stream": stream})
 		if not self._responses:
 			raise AssertionError("FakeModel ran out of scripted responses")
@@ -43,6 +72,13 @@ class FakeModel:
 		if stream:
 			return _scripted_stream(text_parts, response)
 		return response
+
+
+def _last_done(events: list[Event]) -> Done:
+	"""The terminal Done of a streamed run."""
+	last = events[-1]
+	assert isinstance(last, Done), f"stream ended with {type(last).__name__}, not Done"
+	return last
 
 
 def _final(text: str, usage: dict[str, int] | None = None) -> ChatResponse:
@@ -247,13 +283,15 @@ class TestAgentToolLoop(UnitTestCase):
 class TestAgentInputValidation(UnitTestCase):
 	def test_non_list_non_str_input_rejected(self):
 		agent = Agent(model=FakeModel([]))
+		not_a_valid_input: Any = 42
 		with self.assertRaises(TypeError):
-			agent.run(42)
+			agent.run(not_a_valid_input)
 
 	def test_non_dict_element_rejected(self):
 		agent = Agent(model=FakeModel([]))
+		not_a_valid_input: Any = ["not a dict"]
 		with self.assertRaises(TypeError):
-			agent.run(["not a dict"])
+			agent.run(not_a_valid_input)
 
 	def test_missing_role_rejected(self):
 		agent = Agent(model=FakeModel([]))
@@ -453,8 +491,7 @@ class TestAgentStreaming(UnitTestCase):
 		texts = [e.text for e in events if isinstance(e, TextChunk)]
 		self.assertEqual(texts, ["hello ", "world"])
 
-		done = events[-1]
-		self.assertIsInstance(done, Done)
+		done = _last_done(events)
 		self.assertIsInstance(done.result, RunResult)
 		self.assertEqual(done.result.output, "hello world")
 		self.assertEqual(done.result.iterations, 1)
@@ -489,8 +526,7 @@ class TestAgentStreaming(UnitTestCase):
 		self.assertEqual(started[0].arguments, {"a": 2, "b": 3})
 		self.assertEqual(ended[0].result, "5")
 
-		done = events[-1]
-		self.assertIsInstance(done, Done)
+		done = _last_done(events)
 		self.assertEqual(done.result.output, "five")
 		self.assertEqual(done.result.iterations, 2)
 
@@ -505,8 +541,7 @@ class TestAgentStreaming(UnitTestCase):
 
 		events = list(agent.run("pick", stream=True))
 
-		done = events[-1]
-		self.assertIsInstance(done, Done)
+		done = _last_done(events)
 		self.assertTrue(done.result.paused)
 		self.assertEqual(done.result.questions[0].key, "c1")
 
@@ -530,7 +565,7 @@ class TestAgentStreaming(UnitTestCase):
 
 		events = list(agent.run("hi", stream=True))
 
-		done = events[-1]
+		done = _last_done(events)
 		self.assertEqual(done.result.usage, {"prompt_tokens": 8, "completion_tokens": 3, "total_tokens": 11})
 
 	def test_run_stream_resume_continues_with_answer(self):
@@ -544,15 +579,14 @@ class TestAgentStreaming(UnitTestCase):
 			tools=[ask_user],
 		)
 		paused_events = list(agent.run("pick", stream=True))
-		paused = paused_events[-1].result
+		paused = _last_done(paused_events).result
 
 		agent.model = FakeModel([_final("picked A")], streams=[["picked A"]])
 		resumed_events = list(agent.resume(paused.messages, {"c1": "A"}, stream=True))
 
 		texts = [e.text for e in resumed_events if isinstance(e, TextChunk)]
 		self.assertEqual("".join(texts), "picked A")
-		done = resumed_events[-1]
-		self.assertIsInstance(done, Done)
+		done = _last_done(resumed_events)
 		self.assertEqual(done.result.output, "picked A")
 
 	def test_run_stream_resume_preserves_prior_tool_calls(self):
@@ -575,11 +609,11 @@ class TestAgentStreaming(UnitTestCase):
 			),
 			tools=[lookup, ask_user],
 		)
-		paused = list(agent.run("look then ask", stream=True))[-1].result
+		paused = _last_done(list(agent.run("look then ask", stream=True))).result
 		self.assertEqual([c.name for c in paused.tool_calls], ["lookup"])
 
 		agent.model = FakeModel([_final("done")], streams=[["done"]])
-		done = list(agent.resume(paused.messages, {"c2": "A"}, stream=True))[-1]
+		done = _last_done(list(agent.resume(paused.messages, {"c2": "A"}, stream=True)))
 
 		self.assertEqual([c.name for c in done.result.tool_calls], ["lookup", "ask_user"])
 
@@ -672,8 +706,7 @@ class TestAgentConfirmation(UnitTestCase):
 		tool_ended = [e for e in events if isinstance(e, ToolEnded)]
 		self.assertEqual(len(tool_ended), 1)
 		self.assertEqual(json.loads(tool_ended[0].result)["status"], "denied")
-		self.assertIsInstance(events[-1], Done)
-		self.assertFalse(events[-1].result.paused)
+		self.assertFalse(_last_done(events).result.paused)
 
 	def test_confirm_prompt_renders_plain_english_body(self):
 		@tool(
@@ -763,13 +796,13 @@ class TestToolCallParsing(UnitTestCase):
 
 		call = _build_tool_call("c1", "read", "{not json")
 		self.assertEqual(call.arguments, {})
-		self.assertIn("Invalid JSON", call.error)
+		self.assertIn("Invalid JSON", call.error or "")
 
 	def test_non_object_json_is_error(self):
 		from flow.lib.model import _build_tool_call
 
 		call = _build_tool_call("c1", "read", "[1, 2]")
-		self.assertIn("must be a JSON object", call.error)
+		self.assertIn("must be a JSON object", call.error or "")
 
 	def test_valid_json_parses_without_error(self):
 		from flow.lib.model import _build_tool_call

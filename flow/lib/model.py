@@ -6,9 +6,13 @@ from __future__ import annotations
 import json
 from collections.abc import Generator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 import frappe
+
+if TYPE_CHECKING:
+	from flow.flow.doctype.flow_model.flow_model import FlowModel
+	from flow.flow.doctype.flow_provider.flow_provider import FlowProvider
 
 DEFAULT_TIMEOUT = 60
 
@@ -52,7 +56,7 @@ def resolve_provider_credentials(model_id: str) -> dict[str, Any]:
 	if not provider or not frappe.db.exists("Flow Provider", provider):
 		return {}
 
-	doc = frappe.get_doc("Flow Provider", provider)
+	doc = cast("FlowProvider", frappe.get_doc("Flow Provider", provider))
 	if not doc.enabled:
 		return {}
 
@@ -208,7 +212,7 @@ class Model:
 		if name is not None:
 			if model_id or api_key or base_url or params:
 				raise ValueError("Pass either a Flow Model doc name or explicit kwargs, not both.")
-			doc = frappe.get_doc("Flow Model", name)
+			doc = cast("FlowModel", frappe.get_doc("Flow Model", name))
 			if not doc.enabled:
 				raise ValueError(f"Flow Model {name!r} is disabled")
 			model_id = doc.model_id
@@ -232,13 +236,31 @@ class Model:
 		self.params = params or {}
 		self.timeout = timeout
 
+	@overload
+	def chat(
+		self,
+		messages: str | list[dict[str, Any]],
+		tools: list[dict[str, Any]] | None = None,
+		*,
+		stream: Literal[False] = False,
+	) -> ChatResponse: ...
+
+	@overload
+	def chat(
+		self,
+		messages: str | list[dict[str, Any]],
+		tools: list[dict[str, Any]] | None = None,
+		*,
+		stream: Literal[True],
+	) -> Generator[str | ToolCallBegin, None, ChatResponse]: ...
+
 	def chat(
 		self,
 		messages: str | list[dict[str, Any]],
 		tools: list[dict[str, Any]] | None = None,
 		*,
 		stream: bool = False,
-	) -> ChatResponse | Generator[str, None, ChatResponse]:
+	) -> ChatResponse | Generator[str | ToolCallBegin, None, ChatResponse]:
 		"""Call the model. When `stream=True`, returns a generator that yields text deltas
 		and returns the assembled `ChatResponse` via PEP 380 (`StopIteration.value`)."""
 		import litellm

@@ -2,15 +2,30 @@
 # License: MIT. See LICENSE
 
 import json
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 import frappe
+from frappe.core.doctype.file.file import File
+from frappe.core.doctype.user.user import User
 from frappe.tests import IntegrationTestCase
 from werkzeug.wrappers import Response
 
-from flow.api import attach_file, recover_session, resume_run, start_run, submit_feedback
+from flow.api import (
+	attach_file,
+	get_agent_tools,
+	recover_session,
+	resume_run,
+	start_run,
+	stop_run,
+	submit_feedback,
+)
 from flow.api.api import _parse_attachments
+from flow.flow.doctype.flow_agent.flow_agent import FlowAgent
+from flow.flow.doctype.flow_agent_memory.flow_agent_memory import FlowAgentMemory
+from flow.flow.doctype.flow_model.flow_model import FlowModel
+from flow.flow.doctype.flow_run.flow_run import FlowRun
+from flow.flow.doctype.flow_session.flow_session import FlowSession
 from flow.lib.model import ChatResponse, Model, ToolCall
 from flow.memory import store as memory_store
 from flow.tools.builtins import sync_builtin_tools
@@ -108,8 +123,8 @@ class TestStartRun(IntegrationTestCase):
 		sync_builtin_tools()
 
 	def setUp(self):
-		self.model = frappe.get_doc(_model_doc()).insert()
-		self.agent = frappe.get_doc(_agent_doc(self.model.name)).insert()
+		self.model = cast(FlowModel, frappe.get_doc(_model_doc())).insert()
+		self.agent = cast(FlowAgent, frappe.get_doc(_agent_doc(str(self.model.name)))).insert()
 
 	def tearDown(self):
 		frappe.db.rollback()
@@ -122,14 +137,14 @@ class TestStartRun(IntegrationTestCase):
 
 		self.assertEqual(payload["status"], "Completed")
 		self.assertEqual(payload["output"], "hello")
-		session = frappe.get_doc("Flow Session", payload["session"])
+		session = cast(FlowSession, frappe.get_doc("Flow Session", payload["session"]))
 		self.assertEqual(session.agent, ASSISTANT_AGENT_TITLE)
 
 	def test_start_run_with_named_agent_links_to_agent(self):
 		with patch.object(Model, "chat", return_value=_final()):
 			payload = start_run("hi", agent=self.agent.name)
 
-		session = frappe.get_doc("Flow Session", payload["session"])
+		session = cast(FlowSession, frappe.get_doc("Flow Session", payload["session"]))
 		self.assertEqual(session.agent, self.agent.name)
 		self.assertEqual(payload["status"], "Completed")
 
@@ -171,7 +186,7 @@ class TestStartRun(IntegrationTestCase):
 		self.assertEqual(done["status"], "Completed")
 		self.assertEqual(done["output"], "hello world")
 
-		run = frappe.get_doc("Flow Run", events[0]["name"])
+		run = cast(FlowRun, frappe.get_doc("Flow Run", events[0]["name"]))
 		self.assertEqual(run.status, "Completed")
 		self.assertEqual(run.output, "hello world")
 
@@ -183,8 +198,8 @@ class TestStartRun(IntegrationTestCase):
 			events = _sse_events(response)
 
 		self.assertEqual(events[0]["type"], "run_started")
-		run = frappe.get_doc("Flow Run", events[0]["name"])
-		session = frappe.get_doc("Flow Session", run.session)
+		run = cast(FlowRun, frappe.get_doc("Flow Run", events[0]["name"]))
+		session = cast(FlowSession, frappe.get_doc("Flow Session", run.session))
 		self.assertEqual(session.agent, ASSISTANT_AGENT_TITLE)
 
 	def test_start_run_stream_accepts_truthy_string(self):
@@ -205,7 +220,7 @@ class TestStartRun(IntegrationTestCase):
 		self.assertEqual(events[-1]["type"], "error")
 		self.assertIn("kaboom", events[-1]["message"])
 
-		run = frappe.get_doc("Flow Run", events[0]["name"])
+		run = cast(FlowRun, frappe.get_doc("Flow Run", events[0]["name"]))
 		self.assertEqual(run.status, "Failed")
 
 
@@ -216,8 +231,8 @@ class TestResumeRun(IntegrationTestCase):
 		sync_builtin_tools()
 
 	def setUp(self):
-		self.model = frappe.get_doc(_model_doc()).insert()
-		self.agent = frappe.get_doc(_agent_doc(self.model.name)).insert()
+		self.model = cast(FlowModel, frappe.get_doc(_model_doc())).insert()
+		self.agent = cast(FlowAgent, frappe.get_doc(_agent_doc(str(self.model.name)))).insert()
 
 	def tearDown(self):
 		frappe.db.rollback()
@@ -259,7 +274,7 @@ class TestResumeRun(IntegrationTestCase):
 
 		self.assertEqual(payload["status"], "Completed")
 		self.assertEqual(called, [])  # model never called after Deny
-		self.assertEqual(frappe.get_doc("Flow Run", run_name).status, "Completed")
+		self.assertEqual(cast(FlowRun, frappe.get_doc("Flow Run", run_name)).status, "Completed")
 
 	def test_resume_accepts_json_string_answers(self):
 		run_name = self._pause(agent=self.agent.name)
@@ -311,7 +326,7 @@ class TestResumeRun(IntegrationTestCase):
 		self.assertIn("done", types)
 		self.assertEqual(events[-1]["status"], "Completed")
 
-		run = frappe.get_doc("Flow Run", run_name)
+		run = cast(FlowRun, frappe.get_doc("Flow Run", run_name))
 		self.assertEqual(run.status, "Completed")
 
 	def test_resume_failure_marks_run_failed(self):
@@ -321,9 +336,9 @@ class TestResumeRun(IntegrationTestCase):
 			with self.assertRaises(RuntimeError):
 				resume_run(run_name, {"c1": "use a different approach"})
 
-		failed = frappe.get_doc("Flow Run", run_name)
+		failed = cast(FlowRun, frappe.get_doc("Flow Run", run_name))
 		self.assertEqual(failed.status, "Failed")
-		self.assertIn("boom", failed.error)
+		self.assertIn("boom", failed.error or "")
 
 
 class TestStartRunSessions(IntegrationTestCase):
@@ -333,13 +348,16 @@ class TestStartRunSessions(IntegrationTestCase):
 		sync_builtin_tools()
 
 	def setUp(self):
-		self.model_doc = frappe.get_doc(
-			{
-				"doctype": "Flow Model",
-				"title": "Test Session Model",
-				"model_id": "openai/gpt-4o-mini",
-				"enabled": 1,
-			}
+		self.model_doc = cast(
+			FlowModel,
+			frappe.get_doc(
+				{
+					"doctype": "Flow Model",
+					"title": "Test Session Model",
+					"model_id": "openai/gpt-4o-mini",
+					"enabled": 1,
+				}
+			),
 		).insert()
 
 	def tearDown(self):
@@ -351,7 +369,7 @@ class TestStartRunSessions(IntegrationTestCase):
 			result = start_run("hello world")
 
 		self.assertIsNotNone(result["session"])
-		session = frappe.get_doc("Flow Session", result["session"])
+		session = cast(FlowSession, frappe.get_doc("Flow Session", result["session"]))
 		self.assertEqual(session.owner, frappe.session.user)
 		self.assertEqual(session.title, "hello world")
 
@@ -359,7 +377,7 @@ class TestStartRunSessions(IntegrationTestCase):
 		with patch.object(Model, "chat", return_value=_final()):
 			result = start_run("hi")
 
-		run = frappe.get_doc("Flow Run", result["name"])
+		run = cast(FlowRun, frappe.get_doc("Flow Run", result["name"]))
 		self.assertEqual(run.session, result["session"])
 
 	def test_second_turn_threads_prior_messages(self):
@@ -384,8 +402,9 @@ class TestStartRunSessions(IntegrationTestCase):
 		from flow.assistant.assistant import ASSISTANT_AGENT_TITLE
 
 		sync_builtin_assistant(model=self.model_doc.name)
-		session = frappe.get_doc(
-			{"doctype": "Flow Session", "agent": ASSISTANT_AGENT_TITLE, "title": "carried"}
+		session = cast(
+			FlowSession,
+			frappe.get_doc({"doctype": "Flow Session", "agent": ASSISTANT_AGENT_TITLE, "title": "carried"}),
 		).insert(ignore_permissions=True)
 
 		with patch.object(Model, "chat", return_value=_final()):
@@ -398,27 +417,33 @@ class TestStartRunSessions(IntegrationTestCase):
 			start_run("hi", session="ghost-session-id")
 
 	def test_agent_mismatch_with_session_raises(self):
-		agent_a = frappe.get_doc(
-			{
-				"doctype": "Flow Agent",
-				"title": "Agent Mismatch A",
-				"model": self.model_doc.name,
-				"instructions": "x",
-				"enabled": 1,
-			}
+		agent_a = cast(
+			FlowAgent,
+			frappe.get_doc(
+				{
+					"doctype": "Flow Agent",
+					"title": "Agent Mismatch A",
+					"model": self.model_doc.name,
+					"instructions": "x",
+					"enabled": 1,
+				}
+			),
 		).insert()
-		agent_b = frappe.get_doc(
-			{
-				"doctype": "Flow Agent",
-				"title": "Agent Mismatch B",
-				"model": self.model_doc.name,
-				"instructions": "x",
-				"enabled": 1,
-			}
+		agent_b = cast(
+			FlowAgent,
+			frappe.get_doc(
+				{
+					"doctype": "Flow Agent",
+					"title": "Agent Mismatch B",
+					"model": self.model_doc.name,
+					"instructions": "x",
+					"enabled": 1,
+				}
+			),
 		).insert()
-		session = frappe.get_doc({"doctype": "Flow Session", "agent": agent_a.name}).insert(
-			ignore_permissions=True
-		)
+		session = cast(
+			FlowSession, frappe.get_doc({"doctype": "Flow Session", "agent": agent_a.name})
+		).insert(ignore_permissions=True)
 
 		with self.assertRaisesRegex(frappe.ValidationError, "Agent Mismatch"):
 			start_run("hi", session=session.name, agent=agent_b.name)
@@ -437,14 +462,18 @@ class TestStartRunSessions(IntegrationTestCase):
 def _ensure_user(email: str) -> str:
 	if frappe.db.exists("User", email):
 		return email
-	user = frappe.get_doc(
-		{
-			"doctype": "User",
-			"email": email,
-			"first_name": email.split("@")[0],
-			"send_welcome_email": 0,
-			"enabled": 1,
-		}
+	user = cast(
+		User,
+		frappe.get_doc(
+			{
+				"doctype": "User",
+				"email": email,
+				"first_name": email.split("@")[0],
+				"roles": [{"role": "Report Manager"}],
+				"send_welcome_email": 0,
+				"enabled": 1,
+			}
+		),
 	)
 	user.insert(ignore_permissions=True)
 	return email
@@ -457,13 +486,16 @@ class TestStartRunSecurity(IntegrationTestCase):
 		sync_builtin_tools()
 
 	def setUp(self):
-		self.model_doc = frappe.get_doc(
-			{
-				"doctype": "Flow Model",
-				"title": "Test Security Model",
-				"model_id": "openai/gpt-4o-mini",
-				"enabled": 1,
-			}
+		self.model_doc = cast(
+			FlowModel,
+			frappe.get_doc(
+				{
+					"doctype": "Flow Model",
+					"title": "Test Security Model",
+					"model_id": "openai/gpt-4o-mini",
+					"enabled": 1,
+				}
+			),
 		).insert()
 		self.other_user = _ensure_user("other-ai-user@example.com")
 
@@ -489,15 +521,18 @@ class TestStartRunAttachments(IntegrationTestCase):
 		sync_builtin_tools()
 
 	def setUp(self):
-		self.model = frappe.get_doc(_model_doc(title="Attach Model")).insert()
-		self.agent = frappe.get_doc(_agent_doc(self.model.name, title="Attach Agent")).insert()
+		self.model = cast(FlowModel, frappe.get_doc(_model_doc(title="Attach Model"))).insert()
+		self.agent = cast(
+			FlowAgent, frappe.get_doc(_agent_doc(str(self.model.name), title="Attach Agent"))
+		).insert()
 
 	def tearDown(self):
 		frappe.db.rollback()
 
 	def _file(self, file_name: str = "notes.txt", content: str = "the secret code is 1234"):
-		return frappe.get_doc(
-			{"doctype": "File", "file_name": file_name, "content": content, "is_private": 1}
+		return cast(
+			File,
+			frappe.get_doc({"doctype": "File", "file_name": file_name, "content": content, "is_private": 1}),
 		).insert()
 
 	def _capture(self):
@@ -519,7 +554,7 @@ class TestStartRunAttachments(IntegrationTestCase):
 		self.assertIn("the secret code is 1234", user_msg["content"])
 		self.assertIn("summarize this", user_msg["content"])
 
-		session = frappe.get_doc("Flow Session", payload["session"])
+		session = cast(FlowSession, frappe.get_doc("Flow Session", payload["session"]))
 		stored_user = [m for m in session.messages if m.role == "user"][-1]
 		self.assertEqual(stored_user.content, "summarize this")
 
@@ -559,7 +594,7 @@ class TestStartRunAttachments(IntegrationTestCase):
 		with patch.object(Model, "chat", return_value=_final()):
 			payload = start_run("hi", agent=self.agent.name, attachments=[file_doc.name, file_doc.name])
 
-		session = frappe.get_doc("Flow Session", payload["session"])
+		session = cast(FlowSession, frappe.get_doc("Flow Session", payload["session"]))
 		self.assertEqual(len(session.attachments), 1)
 
 	def test_attachments_accepts_json_string(self):
@@ -585,8 +620,9 @@ class TestAttachFile(IntegrationTestCase):
 		frappe.db.rollback()
 
 	def _file(self, file_name: str = "report.txt", content: str = "report body"):
-		return frappe.get_doc(
-			{"doctype": "File", "file_name": file_name, "content": content, "is_private": 1}
+		return cast(
+			File,
+			frappe.get_doc({"doctype": "File", "file_name": file_name, "content": content, "is_private": 1}),
 		).insert()
 
 	def test_attach_file_returns_chip_metadata_and_stages_text(self):
@@ -598,7 +634,9 @@ class TestAttachFile(IntegrationTestCase):
 		self.assertEqual(chip["file"], file_doc.name)
 		self.assertEqual(chip["file_name"], "report.txt")
 		self.assertNotIn("extracted_text", chip)
-		self.assertEqual(staged_attachment(file_doc.name)["extracted_text"], "report body")
+		staged = staged_attachment(file_doc.name)
+		assert staged is not None
+		self.assertEqual(staged["extracted_text"], "report body")
 
 	def test_attach_file_strips_and_resolves_input(self):
 		file_doc = self._file()
@@ -657,12 +695,25 @@ class TestRecoverSession(IntegrationTestCase):
 		frappe.db.rollback()
 
 	def _session(self) -> str:
-		return frappe.get_doc({"doctype": "Flow Session"}).insert(ignore_permissions=True).name
+		return str(
+			cast(FlowSession, frappe.get_doc({"doctype": "Flow Session"}))
+			.insert(ignore_permissions=True)
+			.name
+		)
 
 	def _run(self, session: str, status: str, **fields) -> str:
-		return (
-			frappe.get_doc(
-				{"doctype": "Flow Run", "session": session, "source": "Manual", "status": status, **fields}
+		return str(
+			cast(
+				FlowRun,
+				frappe.get_doc(
+					{
+						"doctype": "Flow Run",
+						"session": session,
+						"source": "Manual",
+						"status": status,
+						**fields,
+					}
+				),
 			)
 			.insert(ignore_permissions=True)
 			.name
@@ -673,9 +724,9 @@ class TestRecoverSession(IntegrationTestCase):
 		run = self._run(session, "Running")
 
 		self.assertEqual(recover_session(session), {"recovered": 1})
-		doc = frappe.get_doc("Flow Run", run)
+		doc = cast(FlowRun, frappe.get_doc("Flow Run", run))
 		self.assertEqual(doc.status, "Failed")
-		self.assertIn("abandoned", doc.error)
+		self.assertIn("abandoned", doc.error or "")
 
 	def test_completed_and_paused_runs_untouched(self):
 		session = self._session()
@@ -702,6 +753,126 @@ class TestRecoverSession(IntegrationTestCase):
 			recover_session("  ")
 
 
+class TestStopRun(IntegrationTestCase):
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		sync_builtin_tools()
+
+	def setUp(self):
+		self.model = cast(FlowModel, frappe.get_doc(_model_doc(title="Stop Model"))).insert()
+		self.agent = cast(FlowAgent, frappe.get_doc(_agent_doc(str(self.model.name)))).insert()
+
+	def tearDown(self):
+		frappe.set_user("Administrator")
+		frappe.db.rollback()
+
+	def _paused(self) -> str:
+		with patch.object(Model, "chat", return_value=_confirm_call()):
+			payload = start_run("delete the records", agent=self.agent.name)
+		self.assertEqual(payload["status"], "Paused")
+		return payload["name"]
+
+	def test_paused_run_is_failed_so_the_agent_cannot_continue(self):
+		run_name = self._paused()
+
+		self.assertEqual(stop_run(run_name), {"status": "Failed"})
+		run = cast(FlowRun, frappe.get_doc("Flow Run", run_name))
+		self.assertEqual(run.status, "Failed")
+		self.assertEqual(run.error, "Stopped by user.")
+
+	def test_running_run_is_failed(self):
+		run_name = self._paused()
+		frappe.db.set_value("Flow Run", run_name, "status", "Running")
+
+		self.assertEqual(stop_run(run_name), {"status": "Failed"})
+
+	def test_finished_run_keeps_its_status(self):
+		with patch.object(Model, "chat", return_value=_final()):
+			payload = start_run("hi", agent=self.agent.name)
+
+		self.assertEqual(stop_run(payload["name"]), {"status": "Completed"})
+		self.assertEqual(frappe.db.get_value("Flow Run", payload["name"], "status"), "Completed")
+
+	def test_run_name_is_trimmed(self):
+		run_name = self._paused()
+
+		self.assertEqual(stop_run(f"  {run_name} "), {"status": "Failed"})
+
+	def test_blank_run_is_rejected(self):
+		for blank in ("", "   "):
+			with self.subTest(run_name=blank), self.assertRaisesRegex(frappe.ValidationError, "required"):
+				stop_run(blank)
+
+	def test_unknown_run_raises(self):
+		with self.assertRaises(frappe.DoesNotExistError):
+			stop_run("does-not-exist")
+
+	def test_other_users_run_is_rejected(self):
+		run_name = self._paused()
+
+		frappe.set_user(_ensure_user("stop-other-user@example.com"))
+		with self.assertRaises(frappe.PermissionError):
+			stop_run(run_name)
+
+		frappe.set_user("Administrator")
+		self.assertEqual(frappe.db.get_value("Flow Run", run_name, "status"), "Paused")
+
+
+class TestGetAgentTools(IntegrationTestCase):
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		sync_builtin_tools()
+
+	def setUp(self):
+		self.model = cast(FlowModel, frappe.get_doc(_model_doc(title="Tools Model"))).insert()
+
+	def tearDown(self):
+		frappe.set_user("Administrator")
+		frappe.db.rollback()
+
+	def _agent(self, tools: list[str]) -> FlowAgent:
+		return cast(
+			FlowAgent,
+			frappe.get_doc(
+				_agent_doc(str(self.model.name), tools=[{"tool": tool} for tool in tools])
+			).insert(),
+		)
+
+	def test_maps_each_tool_slug_to_whether_it_needs_confirmation(self):
+		agent = self._agent(["read", "execute"])
+
+		self.assertEqual(get_agent_tools(str(agent.name)), {"read": False, "execute": True})
+
+	def test_agent_without_tools_maps_to_nothing(self):
+		agent = self._agent(["read"])
+		frappe.db.delete("Flow Agent Tool", {"parent": agent.name})
+
+		self.assertEqual(get_agent_tools(str(agent.name)), {})
+
+	def test_agent_name_is_trimmed(self):
+		agent = self._agent(["execute"])
+
+		self.assertEqual(get_agent_tools(f" {agent.name} "), {"execute": True})
+
+	def test_blank_agent_maps_to_nothing(self):
+		for blank in ("", "   "):
+			with self.subTest(agent=blank):
+				self.assertEqual(get_agent_tools(blank), {})
+
+	def test_unknown_agent_raises(self):
+		with self.assertRaises(frappe.DoesNotExistError):
+			get_agent_tools("does-not-exist")
+
+	def test_a_user_who_cannot_read_the_agent_is_rejected(self):
+		agent = self._agent(["read"])
+
+		frappe.set_user("Guest")
+		with self.assertRaises(frappe.PermissionError):
+			get_agent_tools(str(agent.name))
+
+
 class TestSubmitFeedback(IntegrationTestCase):
 	@classmethod
 	def setUpClass(cls):
@@ -709,9 +880,14 @@ class TestSubmitFeedback(IntegrationTestCase):
 		sync_builtin_tools()
 
 	def setUp(self):
-		self.model = frappe.get_doc(_model_doc(title="Feedback Test Model")).insert()
-		self.agent = frappe.get_doc(
-			_agent_doc(self.model.name, title="Feedback Test Agent", tools=[{"tool": "update_memory"}])
+		self.model = cast(FlowModel, frappe.get_doc(_model_doc(title="Feedback Test Model"))).insert()
+		self.agent = cast(
+			FlowAgent,
+			frappe.get_doc(
+				_agent_doc(
+					str(self.model.name), title="Feedback Test Agent", tools=[{"tool": "update_memory"}]
+				)
+			),
 		).insert()
 
 	def tearDown(self):
@@ -720,18 +896,21 @@ class TestSubmitFeedback(IntegrationTestCase):
 		memory_store.drop_table()
 
 	def _run(self, status: str = "Completed", agent: str | None = None, **fields) -> str:
-		session = frappe.get_doc({"doctype": "Flow Session", "agent": agent or self.agent.name}).insert(
-			ignore_permissions=True
-		)
-		return (
-			frappe.get_doc(
-				{
-					"doctype": "Flow Run",
-					"session": session.name,
-					"source": "Manual",
-					"status": status,
-					**fields,
-				}
+		session = cast(
+			FlowSession, frappe.get_doc({"doctype": "Flow Session", "agent": agent or self.agent.name})
+		).insert(ignore_permissions=True)
+		return str(
+			cast(
+				FlowRun,
+				frappe.get_doc(
+					{
+						"doctype": "Flow Run",
+						"session": session.name,
+						"source": "Manual",
+						"status": status,
+						**fields,
+					}
+				),
 			)
 			.insert(ignore_permissions=True)
 			.name
@@ -745,7 +924,7 @@ class TestSubmitFeedback(IntegrationTestCase):
 	def test_down_with_comment_persists(self):
 		run = self._run()
 		submit_feedback(run, "Down", comment="Wrong item code.")
-		doc = frappe.get_doc("Flow Run", run)
+		doc = cast(FlowRun, frappe.get_doc("Flow Run", run))
 		self.assertEqual(doc.feedback_rating, "Down")
 		self.assertEqual(doc.feedback_comment, "Wrong item code.")
 
@@ -770,7 +949,7 @@ class TestSubmitFeedback(IntegrationTestCase):
 	def test_down_comment_saved_as_memory(self):
 		run = self._run()
 		result = submit_feedback(run, "Down", comment="Widget A maps to WGT-001.")
-		memory = frappe.get_doc("Flow Agent Memory", result["memory"])
+		memory = cast(FlowAgentMemory, frappe.get_doc("Flow Agent Memory", result["memory"]))
 		self.assertEqual(memory.agent, self.agent.name)
 		self.assertEqual(memory.scope, "Agent")
 		self.assertEqual(memory.source, "Feedback")
@@ -778,7 +957,9 @@ class TestSubmitFeedback(IntegrationTestCase):
 		self.assertEqual(memory.content, "Widget A maps to WGT-001.")
 
 	def test_down_comment_without_memory_tool_records_but_skips_memory(self):
-		other = frappe.get_doc(_agent_doc(self.model.name, title="Feedback No Memory Agent")).insert()
+		other = cast(
+			FlowAgent, frappe.get_doc(_agent_doc(str(self.model.name), title="Feedback No Memory Agent"))
+		).insert()
 		run = self._run(agent=other.name)
 		result = submit_feedback(run, "Down", comment="Fix it.")
 		self.assertNotIn("memory", result)
@@ -799,7 +980,7 @@ class TestSubmitFeedback(IntegrationTestCase):
 		run = self._run()
 		submit_feedback(run, "Down", comment="Not quite.")
 		self.assertEqual(submit_feedback(run, "None"), {"rating": None})
-		doc = frappe.get_doc("Flow Run", run)
+		doc = cast(FlowRun, frappe.get_doc("Flow Run", run))
 		self.assertFalse(doc.feedback_rating)
 		self.assertIsNone(doc.feedback_comment)
 
@@ -817,9 +998,12 @@ class TestMemoryRunProvenance(IntegrationTestCase):
 		sync_builtin_tools()
 
 	def setUp(self):
-		self.model = frappe.get_doc(_model_doc(title="Provenance Model")).insert()
-		self.agent = frappe.get_doc(
-			_agent_doc(self.model.name, title="Provenance Agent", tools=[{"tool": "update_memory"}])
+		self.model = cast(FlowModel, frappe.get_doc(_model_doc(title="Provenance Model"))).insert()
+		self.agent = cast(
+			FlowAgent,
+			frappe.get_doc(
+				_agent_doc(str(self.model.name), title="Provenance Agent", tools=[{"tool": "update_memory"}])
+			),
 		).insert()
 
 	def tearDown(self):
@@ -832,7 +1016,8 @@ class TestMemoryRunProvenance(IntegrationTestCase):
 			payload = start_run("remember the mapping", agent=self.agent.name)
 
 		self.assertEqual(payload["status"], "Completed")
-		memory = frappe.get_doc("Flow Agent Memory", {"agent": self.agent.name})
+		memory_name = frappe.db.get_value("Flow Agent Memory", {"agent": self.agent.name}, "name")
+		memory = cast(FlowAgentMemory, frappe.get_doc("Flow Agent Memory", str(memory_name)))
 		self.assertEqual(memory.source, "Agent")
 		self.assertEqual(memory.source_run, payload["name"])
 		# The flag must not linger past the run that set it.

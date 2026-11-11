@@ -1,7 +1,10 @@
 # Copyright (c) 2026, Frappe Technologies and Contributors
 # See license.txt
 
+from typing import cast
+
 import frappe
+from frappe.core.doctype.file.file import File
 from frappe.tests import IntegrationTestCase
 
 from flow.flow.doctype.flow_session_attachment.flow_session_attachment import (
@@ -13,8 +16,11 @@ from flow.flow.doctype.flow_session_attachment.flow_session_attachment import (
 
 
 def _file(file_name="note.txt", content="attachment body", **kwargs):
-	return frappe.get_doc(
-		{"doctype": "File", "file_name": file_name, "content": content, "is_private": 1, **kwargs}
+	return cast(
+		File,
+		frappe.get_doc(
+			{"doctype": "File", "file_name": file_name, "content": content, "is_private": 1, **kwargs}
+		),
 	).insert(ignore_permissions=True)
 
 
@@ -80,7 +86,9 @@ class TestStageAttachment(IntegrationTestCase):
 		chip = stage_attachment(file_doc.name)
 		self.assertEqual(set(chip), {"file", "file_name", "file_size"})
 		self.assertEqual(chip["file"], file_doc.name)
-		self.assertEqual(staged_attachment(file_doc.name)["extracted_text"], "staged body")
+		staged = staged_attachment(file_doc.name)
+		assert staged is not None
+		self.assertEqual(staged["extracted_text"], "staged body")
 
 	def test_staged_attachment_is_user_scoped(self):
 		file_doc = _file(content="staged body")
@@ -96,6 +104,7 @@ class TestStageAttachment(IntegrationTestCase):
 		stage_attachment(file_doc.name)
 		self.assertEqual(resolve_attachment(file_doc.name)["extracted_text"], "resolved body")
 
+		assert frappe.cache is not None
 		frappe.cache.delete_value(f"chat_attachment:{frappe.session.user}:{file_doc.name}")
 		# Cache miss re-extracts (and re-checks permission).
 		self.assertEqual(resolve_attachment(file_doc.name)["extracted_text"], "resolved body")

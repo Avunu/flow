@@ -54,7 +54,7 @@ class FlowProvider(Document):
 			import litellm
 		except ImportError:
 			return
-		known = {p.value for p in litellm.provider_list}
+		known = {p if isinstance(p, str) else p.value for p in litellm.provider_list}
 		if self.provider not in known:
 			frappe.throw(
 				_(

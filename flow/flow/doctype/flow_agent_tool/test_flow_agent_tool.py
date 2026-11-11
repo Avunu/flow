@@ -1,9 +1,13 @@
 # Copyright (c) 2026, Frappe Technologies and Contributors
 # See license.txt
 
+from typing import cast
+
 import frappe
 from frappe.tests import IntegrationTestCase
 
+from flow.flow.doctype.flow_agent.flow_agent import FlowAgent
+from flow.flow.doctype.flow_model.flow_model import FlowModel
 from flow.tools.builtins import sync_builtin_tools
 
 
@@ -17,13 +21,16 @@ class TestFlowAgentToolChildTable(IntegrationTestCase):
 		sync_builtin_tools()
 
 	def setUp(self):
-		self.model = frappe.get_doc(
-			{
-				"doctype": "Flow Model",
-				"title": "Test Agent Tool Model",
-				"model_id": "openai/gpt-4o-mini",
-				"enabled": 1,
-			}
+		self.model = cast(
+			FlowModel,
+			frappe.get_doc(
+				{
+					"doctype": "Flow Model",
+					"title": "Test Agent Tool Model",
+					"model_id": "openai/gpt-4o-mini",
+					"enabled": 1,
+				}
+			),
 		).insert()
 
 	def tearDown(self):
@@ -41,11 +48,13 @@ class TestFlowAgentToolChildTable(IntegrationTestCase):
 		return doc
 
 	def test_child_rows_persist_through_parent(self):
-		doc = frappe.get_doc(self._agent(tools=[{"tool": "read"}, {"tool": "execute"}])).insert()
+		doc = cast(
+			FlowAgent, frappe.get_doc(self._agent(tools=[{"tool": "read"}, {"tool": "execute"}]))
+		).insert()
 
 		self.assertEqual([row.tool for row in doc.tools], ["read", "execute"])
 		# Round-trip from DB to confirm the rows landed.
-		reloaded = frappe.get_doc("Flow Agent", doc.name)
+		reloaded = cast(FlowAgent, frappe.get_doc("Flow Agent", str(doc.name)))
 		self.assertEqual([row.tool for row in reloaded.tools], ["read", "execute"])
 
 	def test_unknown_tool_link_rejected(self):

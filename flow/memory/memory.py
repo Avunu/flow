@@ -13,12 +13,16 @@ scope is stamped with the session user.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import frappe
 from frappe import _
 
 from flow.memory import store
+from flow.utils.errors import throw
+
+if TYPE_CHECKING:
+	from flow.flow.doctype.flow_agent_memory.flow_agent_memory import FlowAgentMemory
 
 MEMORY_TOOL_SLUG = "update_memory"
 # Below this many memories everything is injected; above it, keyword search + recency.
@@ -81,7 +85,7 @@ def _update(agent: str, memory_id: str, content: str, keywords: str | None = Non
 			title=_("Unknown Memory"),
 		)
 
-	doc = frappe.get_doc("Flow Agent Memory", memory_id)
+	doc = cast("FlowAgentMemory", frappe.get_doc("Flow Agent Memory", memory_id))
 	doc.content = content
 	if keywords is not None:
 		doc.keywords = keywords
@@ -101,7 +105,7 @@ def save_memory(
 	the model). User-scoped rows are stamped with the session user server-side."""
 	scope_value = _SCOPE_BY_ARG.get(scope)
 	if not scope_value:
-		frappe.throw(_("scope must be 'agent' or 'user'."), title=_("Invalid Scope"))
+		throw(_("scope must be 'agent' or 'user'."), title=_("Invalid Scope"))
 
 	if memory_id:
 		return _update(agent, memory_id.strip(), content, keywords)

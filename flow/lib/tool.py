@@ -8,7 +8,7 @@ import types
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
+from typing import Any, Literal, Union, get_args, get_origin, get_type_hints, overload
 
 from pydantic import BaseModel, ConfigDict, validate_call
 
@@ -186,6 +186,27 @@ def build_schema(func: Callable[..., Any]) -> dict[str, Any]:
 	return schema
 
 
+@overload
+def tool(
+	func: Callable[..., Any],
+	*,
+	name: str | None = None,
+	description: str | None = None,
+	requires_confirmation: bool = False,
+	confirm_prompt: Callable[[dict[str, Any]], str] | None = None,
+) -> Tool: ...
+
+
+@overload
+def tool(
+	*,
+	name: str | None = None,
+	description: str | None = None,
+	requires_confirmation: bool = False,
+	confirm_prompt: Callable[[dict[str, Any]], str] | None = None,
+) -> Callable[[Callable[..., Any]], Tool]: ...
+
+
 def tool(
 	func: Callable[..., Any] | None = None,
 	*,
@@ -198,7 +219,7 @@ def tool(
 		if not callable(f):
 			raise TypeError("@tool can only be applied to callables")
 		return Tool(
-			name=name or f.__name__,
+			name=name or getattr(f, "__name__", type(f).__name__),
 			description=description or (inspect.getdoc(f) or "").strip(),
 			parameters=build_schema(f),
 			func=f,

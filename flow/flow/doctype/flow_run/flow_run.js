@@ -11,17 +11,19 @@ frappe.ui.form.on("Flow Run", {
 			}
 		}
 
+		/** @param {unknown} value */
 		const parse = (value) => {
 			if (!value) return null;
 			if (typeof value === "object") return value;
 			try {
-				return JSON.parse(value);
+				return JSON.parse(String(value));
 			} catch {
 				return null;
 			}
 		};
 
-		frm.get_field("detail_html").$wrapper.html(
+		const detail = /** @type {frappe.ui.form.ControlHTML} */ (frm.fields_dict.detail_html);
+		detail.$wrapper.html(
 			frappe.render_template("flow_run_detail", {
 				usage: parse(frm.doc.usage),
 				config: parse(frm.doc.config_snapshot),

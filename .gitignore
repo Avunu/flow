@@ -11,7 +11,6 @@ __pycache__
 .vscode/
 .venv/
 dist/
-flow/public/flow_panel/
 # >>> frappe-nix >>> (managed block — edits here are overwritten)
 # The materialized dev bench: frappe copied out of the store, sites/, logs/,
 # config/pids, the env symlink. Runtime state, never source — deleting it costs

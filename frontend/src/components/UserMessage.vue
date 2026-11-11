@@ -1,9 +1,12 @@
 <script setup>
 import AttachmentChip from "./AttachmentChip.vue";
 
+/** @import { PropType } from "vue" */
+/** @import { Chip } from "@/lib/types" */
+
 defineProps({
 	content: { type: String, default: "" },
-	attachments: { type: Array, default: () => [] },
+	attachments: { type: /** @type {PropType<Chip[]>} */ (Array), default: () => [] },
 });
 </script>
 

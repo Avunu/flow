@@ -3,20 +3,23 @@
 
 frappe.ui.form.on("Flow Session", {
 	refresh(frm) {
+		/** @param {unknown} v */
 		const parse = (v) => {
 			try {
-				return JSON.parse(v);
+				return JSON.parse(String(v));
 			} catch {
 				return null;
 			}
 		};
 		// Pretty-print JSON strings; leave plain text untouched.
+		/** @param {unknown} v */
 		const pretty = (v) => {
 			const p = parse(v);
 			return p !== null ? JSON.stringify(p, null, 2) : v;
 		};
 
 		const items = (frm.doc.messages || []).map((r) => {
+			/** @type {{ role: string | null | undefined, content: string | null, calls: { name: string, args: unknown }[], output?: unknown }} */
 			const item = {
 				role: r.role,
 				content: r.role === "tool" ? null : (r.content || "").trim() || null,
@@ -30,8 +33,7 @@ frappe.ui.form.on("Flow Session", {
 			return item;
 		});
 
-		frm
-			.get_field("transcript_html")
-			.$wrapper.html(frappe.render_template("flow_session_transcript", { items }));
+		const transcript = /** @type {frappe.ui.form.ControlHTML} */ (frm.fields_dict.transcript_html);
+		transcript.$wrapper.html(frappe.render_template("flow_session_transcript", { items }));
 	},
 });

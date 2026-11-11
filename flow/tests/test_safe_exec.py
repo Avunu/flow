@@ -1,7 +1,10 @@
 # Copyright (c) 2026, Frappe Technologies and contributors
 # License: MIT. See LICENSE
 
+from typing import cast
+
 import frappe
+from frappe.desk.doctype.todo.todo import ToDo
 from frappe.tests import IntegrationTestCase
 
 from flow.utils.safe_exec import get_flow_safe_globals, safe_exec
@@ -83,7 +86,9 @@ class TestFlowSafeExec(IntegrationTestCase):
 		self.assertTrue(frappe.db.exists("ToDo", result["created"][0]))
 
 	def test_get_doc_enforces_read_permission(self):
-		todo = frappe.get_doc({"doctype": "ToDo", "description": "secret", "status": "Open"}).insert()
+		todo = cast(
+			ToDo, frappe.get_doc({"doctype": "ToDo", "description": "secret", "status": "Open"})
+		).insert()
 		frappe.set_user("Guest")
 		with self.assertRaises(frappe.PermissionError):
 			safe_exec(f'result = frappe.get_doc("ToDo", "{todo.name}")')

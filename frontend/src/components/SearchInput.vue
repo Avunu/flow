@@ -8,9 +8,14 @@ const props = defineProps({
 	placeholder: { type: String, default: "" },
 	autofocus: { type: Boolean, default: false },
 });
-defineEmits(["update:modelValue"]);
+const emit = defineEmits(["update:modelValue"]);
 
-const input = ref(null);
+/** @param {Event} e */
+function onInput(e) {
+	emit("update:modelValue", /** @type {HTMLInputElement} */ (e.target).value);
+}
+
+const input = ref(/** @type {HTMLInputElement | null} */ (null));
 onMounted(() => props.autofocus && nextTick(() => input.value?.focus()));
 </script>
 
@@ -22,7 +27,7 @@ onMounted(() => props.autofocus && nextTick(() => input.value?.focus()));
 			:value="modelValue"
 			:placeholder="placeholder"
 			class="min-w-0 flex-1 border-0 bg-transparent text-sm text-ink-gray-8 outline-none focus:shadow-none focus:outline-none focus:ring-0 placeholder:text-ink-gray-4"
-			@input="$emit('update:modelValue', $event.target.value)"
+			@input="onInput"
 		/>
 		<slot name="trailing" />
 	</div>

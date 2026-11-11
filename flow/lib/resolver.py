@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import ast
+import keyword
 from typing import TYPE_CHECKING, Any
 
 import frappe
@@ -11,6 +12,7 @@ from frappe import _
 from frappe.utils.safe_exec import safe_exec
 
 from flow.lib.tool import Tool, build_schema
+from flow.utils.errors import throw
 
 if TYPE_CHECKING:
 	from flow.flow.doctype.flow_tool.flow_tool import FlowTool
@@ -44,11 +46,12 @@ def _build_tool(doc: FlowTool, parameters: dict[str, Any], func: Any, *, confirm
 
 
 def _resolve_module(doc: FlowTool) -> Tool:
+	import_path = doc.import_path or ""
 	try:
-		obj = frappe.get_attr(doc.import_path)
+		obj = frappe.get_attr(import_path)
 	except Exception as e:
-		frappe.throw(
-			_("Could not import tool from {0}: {1}").format(doc.import_path, e),
+		throw(
+			_("Could not import tool from {0}: {1}").format(import_path, str(e)),
 			title=_("Tool Import Failed"),
 		)
 
@@ -56,8 +59,8 @@ def _resolve_module(doc: FlowTool) -> Tool:
 		return _build_tool(doc, obj.parameters, obj.func, confirm_prompt=obj.confirm_prompt)
 	if callable(obj):
 		return _build_tool(doc, build_schema(obj), obj)
-	frappe.throw(
-		_("Import path {0} is not a Tool or callable.").format(doc.import_path),
+	throw(
+		_("Import path {0} is not a Tool or callable.").format(import_path),
 		title=_("Invalid Tool"),
 	)
 
@@ -69,11 +72,20 @@ def _make_script_runner(code: str, slug: str, *, restrict_commit_rollback: bool 
 		injected: dict[str, Any] = {}
 		call_parts: list[str] = []
 		for i, (name, value) in enumerate(kwargs.items()):
+			# The argument names come from the model's tool call and are spliced into the script
+			# below, so only a plain identifier may pass; anything else could add code to it.
+			if not name.isidentifier() or keyword.iskeyword(name):
+				raise ValueError(f"Invalid argument name {name!r} for tool {slug}")
 			var = f"{ARG_VAR_PREFIX}{i}"
 			injected[var] = value
 			call_parts.append(f"{name}={var}")
 
 		script = f"{code}\n{RESULT_VAR} = {MAIN_FUNCTION_NAME}({', '.join(call_parts)})\n"
+		# Runs the Script tool's code in frappe's RestrictedPython sandbox. The code is authored by a
+		# System Manager (the only role that can write a Flow Tool); the model supplies only argument
+		# values, injected as variables, and argument names, which must be plain identifiers (checked
+		# above).
+		# nosemgrep: frappe-codeinjection-eval -- sandboxed, System Manager-authored script
 		exec_globals, _locals = safe_exec(
 			script, injected, script_filename=slug, restrict_commit_rollback=restrict_commit_rollback
 		)
@@ -86,17 +98,17 @@ def _find_main(tree: ast.Module) -> ast.FunctionDef:
 	for node in tree.body:
 		if isinstance(node, ast.FunctionDef) and node.name == MAIN_FUNCTION_NAME:
 			return node
-	frappe.throw(_("Code must define a top-level <code>main</code> function."), title=_("Missing main()"))
+	throw(_("Code must define a top-level <code>main</code> function."), title=_("Missing main()"))
 
 
-def _required_arg_names(args: ast.arguments) -> set[str]:
+def _required_arg_names(signature: ast.arguments) -> set[str]:
 	required: set[str] = set()
-	positional = args.posonlyargs + args.args
-	num_required = len(positional) - len(args.defaults)
+	positional = signature.posonlyargs + signature.args
+	num_required = len(positional) - len(signature.defaults)
 	for i, arg in enumerate(positional):
 		if i < num_required:
 			required.add(arg.arg)
-	for arg, default in zip(args.kwonlyargs, args.kw_defaults, strict=True):
+	for arg, default in zip(signature.kwonlyargs, signature.kw_defaults, strict=True):
 		if default is None:
 			required.add(arg.arg)
 	return required
@@ -151,8 +163,9 @@ def schema_from_code(code: str) -> dict[str, Any]:
 
 
 def _resolve_script(doc: FlowTool, *, restrict_commit_rollback: bool = False) -> Tool:
-	runner = _make_script_runner(doc.code, doc.slug, restrict_commit_rollback=restrict_commit_rollback)
-	return _build_tool(doc, schema_from_code(doc.code), runner)
+	code = doc.code or ""
+	runner = _make_script_runner(code, doc.slug, restrict_commit_rollback=restrict_commit_rollback)
+	return _build_tool(doc, schema_from_code(code), runner)
 
 
 def resolve_tool(doc: FlowTool, *, restrict_commit_rollback: bool = False) -> Tool:

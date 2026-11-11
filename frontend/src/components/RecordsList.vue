@@ -4,19 +4,26 @@ import ArgValue from "./ArgValue.vue";
 import { formatScalar, recordLabelKey, isBlockText } from "@/lib/toolMeta";
 import { __ } from "@/lib/translate";
 
+/** @import { PropType } from "vue" */
+
 // Records laid flat: numbered, title first, every field visible right away.
-const props = defineProps({ records: { type: Array, required: true } });
+const props = defineProps({ records: { type: /** @type {PropType<unknown[]>} */ (Array), required: true } });
 
 const ROW_LIMIT = 10;
 
 const labelKey = computed(() => recordLabelKey(props.records));
 const showAll = ref(false);
 
+/**
+ * @param {unknown} item
+ * @returns {item is Record<string, unknown>}
+ */
 const isObj = (item) => item !== null && typeof item === "object" && !Array.isArray(item);
 
 // One field order for every record: the union of all record keys, first seen
 // first, so a field always appears in the same place regardless of per-record order.
 const fieldOrder = computed(() => {
+	/** @type {string[]} */
 	const order = [];
 	for (const rec of props.records) {
 		if (!isObj(rec)) continue;
@@ -44,6 +51,7 @@ const rows = computed(() => {
 	const visible = showAll.value ? props.records : props.records.slice(0, ROW_LIMIT);
 	return visible.map((item, i) => {
 		if (!isObj(item)) return { title: formatScalar(item), rest: null };
+		/** @type {Record<string, unknown>} */
 		const rest = {};
 		for (const k of fieldOrder.value) {
 			if (Object.prototype.hasOwnProperty.call(item, k)) rest[k] = item[k];

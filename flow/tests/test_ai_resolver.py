@@ -1,12 +1,14 @@
 # Copyright (c) 2026, Frappe Technologies and contributors
 # License: MIT. See LICENSE
 
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 import frappe
 from frappe.tests import IntegrationTestCase, UnitTestCase
+from frappe.tests.classes.context_managers import enable_safe_exec
 
+from flow.flow.doctype.flow_tool.flow_tool import FlowTool
 from flow.lib.resolver import schema_from_code
 from flow.lib.tool import Tool, tool
 
@@ -134,14 +136,14 @@ def _script_doc(**overrides: Any) -> dict:
 class TestResolveTool(IntegrationTestCase):
 	@classmethod
 	def setUpClass(cls):
-		cls.enterClassContext(cls.enable_safe_exec())
+		cls.enterClassContext(enable_safe_exec())
 		super().setUpClass()
 
 	def tearDown(self):
 		frappe.db.rollback()
 
 	def test_module_tool_object_is_resolved(self):
-		doc = frappe.get_doc(_module_doc()).insert()
+		doc = cast(FlowTool, frappe.get_doc(_module_doc())).insert()
 		with patch("frappe.get_attr", return_value=_sample_weather):
 			runtime = doc.to_tool()
 
@@ -152,7 +154,7 @@ class TestResolveTool(IntegrationTestCase):
 		self.assertEqual(runtime(city="Paris"), "sunny in Paris")
 
 	def test_module_plain_callable_schema_from_hints(self):
-		doc = frappe.get_doc(_module_doc()).insert()
+		doc = cast(FlowTool, frappe.get_doc(_module_doc())).insert()
 		with patch("frappe.get_attr", return_value=_plain_callable):
 			runtime = doc.to_tool()
 
@@ -161,28 +163,39 @@ class TestResolveTool(IntegrationTestCase):
 		self.assertEqual(runtime.parameters["required"], ["city"])
 
 	def test_module_import_failure_throws(self):
-		doc = frappe.get_doc(_module_doc()).insert()
+		doc = cast(FlowTool, frappe.get_doc(_module_doc())).insert()
 		with patch("frappe.get_attr", side_effect=ImportError("nope")):  # noqa: SIM117
 			with self.assertRaisesRegex(frappe.ValidationError, "import"):
 				doc.to_tool()
 
 	def test_module_non_callable_throws(self):
-		doc = frappe.get_doc(_module_doc()).insert()
+		doc = cast(FlowTool, frappe.get_doc(_module_doc())).insert()
 		with patch("frappe.get_attr", return_value=42):  # noqa: SIM117
 			with self.assertRaisesRegex(frappe.ValidationError, "not a Tool or callable"):
 				doc.to_tool()
 
 	def test_script_tool_executes_in_sandbox(self):
-		doc = frappe.get_doc(_script_doc()).insert()
+		doc = cast(FlowTool, frappe.get_doc(_script_doc())).insert()
 		runtime = doc.to_tool()
 
 		self.assertEqual(runtime.name, "script_weather")
 		self.assertEqual(runtime.parameters["properties"], {"city": {"type": "string"}})
 		self.assertEqual(runtime(city="Paris"), "sunny in Paris")
 
+	def test_script_tool_rejects_argument_names_that_are_not_identifiers(self):
+		# The model chooses the argument names; they are spliced into the call, so a name that
+		# carries code must be refused before anything runs.
+		doc = cast(FlowTool, frappe.get_doc(_script_doc())).insert()
+		runtime = doc.to_tool()
+
+		for name in ("city=1) or (1", "city; x", "class", "", "a b"):
+			with self.assertRaisesRegex(ValueError, "Invalid argument name"):
+				runtime(**{name: "Paris"})
+
 	def test_script_tool_with_no_args_executes(self):
-		doc = frappe.get_doc(
-			_script_doc(slug="ping", title="Ping", code="def main():\n\treturn 'pong'\n")
+		doc = cast(
+			FlowTool,
+			frappe.get_doc(_script_doc(slug="ping", title="Ping", code="def main():\n\treturn 'pong'\n")),
 		).insert()
 		runtime = doc.to_tool()
 		self.assertEqual(runtime(), "pong")

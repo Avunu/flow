@@ -208,6 +208,10 @@ def safe_exec(
 		filename += f": {frappe.scrub(script_filename)}"
 
 	with safe_exec_flags():
+		# This is the sandbox itself, mirroring frappe.utils.safe_exec.safe_exec: _compile_code is
+		# RestrictedPython's compile_restricted, and the globals are the allowlist built by
+		# get_flow_safe_globals(), so the script sees only permission-gated functions.
+		# nosemgrep: frappe-codeinjection-eval -- RestrictedPython compile, allowlisted globals
 		exec(_compile_code(script, filename=filename), exec_globals, _locals)
 
 	return exec_globals, _locals

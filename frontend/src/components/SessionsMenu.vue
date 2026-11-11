@@ -5,14 +5,20 @@ import SearchInput from "./SearchInput.vue";
 import { __ } from "@/lib/translate";
 import { searchSessions } from "@/api/client";
 
-const props = defineProps({ sessions: { type: Array, default: () => [] } });
+/** @import { PropType } from "vue" */
+/** @import { SessionRow } from "@/lib/types" */
+
+const props = defineProps({
+	sessions: { type: /** @type {PropType<SessionRow[]>} */ (Array), default: () => [] },
+});
 const emit = defineEmits(["select"]);
 
 const open = ref(false);
 const query = ref("");
-const results = ref([]);
+const results = ref(/** @type {SessionRow[]} */ ([]));
 const searching = ref(false);
 
+/** @type {ReturnType<typeof setTimeout> | undefined} */
 let debounce;
 let searchSeq = 0;
 watch(query, (q) => {
@@ -42,14 +48,16 @@ watch(open, (v) => {
 // Server results while searching, otherwise the recent list passed in.
 const list = computed(() => (query.value.trim() ? results.value : props.sessions));
 
+/** @param {string} name */
 function choose(name) {
 	open.value = false;
 	emit("select", name);
 }
 
+/** @param {string | null | undefined} ds */
 function timeAgo(ds) {
 	if (!ds) return "";
-	return window.moment ? moment(ds).fromNow() : ds;
+	return window.moment ? window.moment(ds).fromNow() : ds;
 }
 </script>
 

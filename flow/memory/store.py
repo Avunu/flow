@@ -58,7 +58,7 @@ def _ensure_fts_index(table) -> None:
 	table.create_fts_index(FTS_FIELD, replace=True)
 
 
-def _quote(value: str) -> str:
+def _quote(value: object) -> str:
 	"""Quote a string for a LanceDB SQL predicate (single quotes doubled)."""
 	if not isinstance(value, str):
 		raise ValueError(f"Expected string filter value, got {type(value).__name__}")

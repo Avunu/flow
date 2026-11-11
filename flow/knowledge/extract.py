@@ -9,9 +9,15 @@ import os
 import re
 from dataclasses import dataclass
 from io import BytesIO
+from typing import TYPE_CHECKING, cast
 
 import frappe
 from frappe import _
+
+from flow.utils.errors import throw
+
+if TYPE_CHECKING:
+	from frappe.core.doctype.file.file import File
 
 TEXT_EXTENSIONS = {"txt", "text", "md", "markdown", "csv", "tsv", "log", "rst", "json", "yaml", "yml"}
 IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "bmp", "tiff", "tif", "gif"}
@@ -210,18 +216,20 @@ def _extract_by_extension(content, extension: str) -> str:
 		return _ocr_image(_as_bytes(content))
 	if extension in TEXT_EXTENSIONS:
 		return _as_text(content)
-	frappe.throw(_("Unsupported file format: .{0}").format(extension or "?"), title=_("Unsupported Format"))
+	throw(_("Unsupported file format: .{0}").format(extension or "?"), title=_("Unsupported Format"))
 
 
-def extract_file(file_doc) -> str:
+def extract_file(file_doc: File) -> str:
 	"""Extract plain text from a File doc by extension. Usable by any caller that holds a File doc."""
 	extension = os.path.splitext(file_doc.file_name or file_doc.file_url or "")[1].lower().lstrip(".")
 	return _extract_by_extension(file_doc.get_content(), extension).strip()
 
 
 def _extract_file_source(source) -> list[ExtractedDoc]:
-	file_doc = frappe.get_doc("File", {"file_url": source.file})
-	return _single(extract_file(file_doc))
+	file_name = frappe.db.get_value("File", {"file_url": source.file}, "name")
+	if not file_name:
+		throw(_("File {0} not found").format(source.file), frappe.DoesNotExistError)
+	return _single(extract_file(cast("File", frappe.get_doc("File", file_name))))
 
 
 def _validate_public_url(url: str) -> None:
@@ -331,7 +339,7 @@ def _render_rich_text(df, value: str) -> str:
 	if df.fieldtype in MARKDOWN_FIELDTYPES or (df.fieldtype == "Code" and df.options == "Markdown"):
 		from frappe.utils import md_to_html
 
-		return _extract_html(md_to_html(value))
+		return _extract_html(md_to_html(value) or "")
 	return value
 
 
@@ -377,5 +385,5 @@ def extract(source) -> list[ExtractedDoc]:
 	}
 	handler = handlers.get(source.source_type)
 	if handler is None:
-		frappe.throw(_("Unsupported source type: {0}").format(source.source_type))
+		throw(_("Unsupported source type: {0}").format(source.source_type))
 	return handler(source)

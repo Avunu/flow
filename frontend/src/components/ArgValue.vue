@@ -5,16 +5,22 @@ import ChipList from "./ChipList.vue";
 import RecordsList from "./RecordsList.vue";
 import { humanize, argKind, formatScalar } from "@/lib/toolMeta";
 
+/** @import { PropType } from "vue" */
+
 // Fields render in one bordered table: single values as two-column rows, block
 // text (code, long, or multi-line) as full-width rows (label on top, code block
 // below) so they keep their place in the field order. Collections (lists, records,
 // nested objects) render as full-width sections beneath. `blockKeys` forces a key
 // to the block form so a field looks the same across sibling records.
 const props = defineProps({
-	value: { type: Object, required: true },
-	blockKeys: { type: Object, default: () => new Set() },
+	value: { type: /** @type {PropType<Record<string, unknown>>} */ (Object), required: true },
+	blockKeys: { type: /** @type {PropType<Set<string>>} */ (Object), default: () => new Set() },
 });
 
+/**
+ * @param {string} k
+ * @param {unknown} v
+ */
 const kindFor = (k, v) => {
 	if (typeof v === "string" && v && props.blockKeys.has(k)) return "code";
 	return argKind(v);
@@ -22,6 +28,7 @@ const kindFor = (k, v) => {
 
 // In the table: two-column single values + full-span block text. Below: collections.
 const TABLE = new Set(["scalar", "empty", "tuple", "code"]);
+/** @param {string} kind */
 const isFull = (kind) => kind === "code";
 
 const entries = computed(() =>
@@ -30,7 +37,17 @@ const entries = computed(() =>
 const tableRows = computed(() => entries.value.filter((e) => TABLE.has(e.kind)));
 const blocks = computed(() => entries.value.filter((e) => !TABLE.has(e.kind)));
 
-const tupleValues = (v) => (Array.isArray(v[1]) ? v[1] : [v[1]]).map(formatScalar).join(", ");
+// What an entry's value is follows from its kind, which the template switches on.
+/** @param {unknown} v */
+const asList = (v) => /** @type {unknown[]} */ (v);
+/** @param {unknown} v */
+const asObject = (v) => /** @type {Record<string, unknown>} */ (v);
+
+/** @param {unknown} v */
+const tupleValues = (v) => {
+	const [, operand] = asList(v);
+	return (Array.isArray(operand) ? operand : [operand]).map(formatScalar).join(", ");
+};
 </script>
 
 <template>
@@ -61,7 +78,7 @@ const tupleValues = (v) => (Array.isArray(v[1]) ? v[1] : [v[1]]).map(formatScala
 						:class="{ 'border-t border-outline-gray-1': i }"
 					>
 						<template v-if="row.kind === 'tuple'">
-							<span class="text-ink-gray-4">{{ row.value[0] }}</span>
+							<span class="text-ink-gray-4">{{ asList(row.value)[0] }}</span>
 							{{ tupleValues(row.value) }}
 						</template>
 						<template v-else-if="row.kind === 'empty'">—</template>
@@ -75,9 +92,9 @@ const tupleValues = (v) => (Array.isArray(v[1]) ? v[1] : [v[1]]).map(formatScala
 			<div class="mb-2 pb-0 text-[11px] font-semibold uppercase leading-none tracking-wide text-ink-gray-4">
 				{{ humanize(s.key) }}
 			</div>
-			<ChipList v-if="s.kind === 'list'" :items="s.value" />
-			<RecordsList v-else-if="s.kind === 'records'" :records="s.value" />
-			<ArgValue v-else :value="s.value" />
+			<ChipList v-if="s.kind === 'list'" :items="asList(s.value)" />
+			<RecordsList v-else-if="s.kind === 'records'" :records="asList(s.value)" />
+			<ArgValue v-else :value="asObject(s.value)" />
 		</div>
 	</div>
 </template>

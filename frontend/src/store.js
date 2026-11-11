@@ -7,6 +7,14 @@ import { startRun, resumeRun } from "@/api/stream";
 import { normalizeToolName } from "@/lib/toolMeta";
 import { readPanelState } from "@/lib/panelState";
 import { __ } from "@/lib/translate";
+import { errorMessage, isAbort } from "@/lib/errors";
+
+/**
+ * @import {
+ *   AssistantMsg, Chip, Message, Option, Part, Question, RunEvent, SessionRow, StagedAttachment,
+ *   TextPart, ToolPart
+ * } from "@/lib/types"
+ */
 
 // Module-singleton store: one panel instance, one source of truth. Components
 // import this and read/act on shared reactive state — no prop drilling.
@@ -17,23 +25,24 @@ let auid = 0;
 const nextAttachmentId = () => `a${++auid}`;
 
 // ── state ───────────────────────────────────────────────────────────────────
-const agents = ref([]);
-const models = ref([]);
-const recentSessions = ref([]);
+const agents = ref(/** @type {Option[]} */ ([]));
+const models = ref(/** @type {Option[]} */ ([]));
+const recentSessions = ref(/** @type {SessionRow[]} */ ([]));
 
 // Active agent's tool slug → requires_confirmation; the cache keeps agent switches instant.
-const toolApproval = ref({});
+const toolApproval = ref(/** @type {Record<string, boolean>} */ ({}));
+/** @type {Record<string, Record<string, boolean>>} */
 const toolApprovalCache = {};
 
-const selectedAgent = ref(null);
-const selectedModel = ref(null);
-const sessionName = ref(null);
-const runName = ref(null);
+const selectedAgent = ref(/** @type {string | null} */ (null));
+const selectedModel = ref(/** @type {string | null} */ (null));
+const sessionName = ref(/** @type {string | null} */ (null));
+const runName = ref(/** @type {string | null} */ (null));
 
-const messages = ref([]);
+const messages = ref(/** @type {Message[]} */ ([]));
 // Composer attachments staged for the next turn: { uid, file, file_name, file_size, status, error }.
 // status: "uploading" | "ready" | "error".
-const attachments = ref([]);
+const attachments = ref(/** @type {StagedAttachment[]} */ ([]));
 const sending = ref(false);
 const loaded = ref(false);
 const fullscreen = ref(false);
@@ -49,12 +58,14 @@ const needsSetup = computed(() => loaded.value && (!agents.value.length || !mode
 const uploading = computed(() => attachments.value.some((a) => a.status === "uploading"));
 const paused = computed(() => {
 	const last = messages.value[messages.value.length - 1];
-	return Boolean(last?.questions?.length);
+	return last?.role === "assistant" && last.questions.length > 0;
 });
 
+/** @param {string | null} name */
 function agentLabel(name) {
 	return agents.value.find((a) => a.name === name)?.title || name;
 }
+/** @param {string | null} name */
 function modelLabel(name) {
 	if (!name) return null;
 	return models.value.find((m) => m.name === name)?.title || name;
@@ -102,6 +113,7 @@ async function refreshHistory() {
 // Load the classification map for `agent`. The cache serves instantly and is
 // refreshed in the background, so an edited Flow Tool doesn't stay stale all
 // session. Guarded against a stale response winning after a quick agent switch.
+/** @param {string | null} agent */
 function loadToolApproval(agent) {
 	if (!agent) {
 		toolApproval.value = {};
@@ -122,11 +134,13 @@ function loadToolApproval(agent) {
 }
 
 // ── selection ────────────────────────────────────────────────────────────────
+/** @param {string} name */
 function setAgent(name) {
 	if (locked.value) return;
 	selectedAgent.value = name;
 	loadToolApproval(name);
 }
+/** @param {string | null} name */
 function setModel(name) {
 	selectedModel.value = name;
 }
@@ -142,6 +156,7 @@ function newChat() {
 }
 
 // ── attachments ────────────────────────────────────────────────────────────────
+/** @param {FileList | File[] | null} fileList */
 function attachFiles(fileList) {
 	for (const f of Array.from(fileList || [])) {
 		const length = attachments.value.push({
@@ -158,6 +173,10 @@ function attachFiles(fileList) {
 	}
 }
 
+/**
+ * @param {File} f
+ * @param {StagedAttachment} item
+ */
 async function uploadAndStage(f, item) {
 	try {
 		const uploaded = await api.uploadFile(f);
@@ -168,17 +187,19 @@ async function uploadAndStage(f, item) {
 		item.status = "ready";
 	} catch (e) {
 		item.status = "error";
-		item.error = e?.message || "";
+		item.error = errorMessage(e);
 	}
 }
 
-function removeAttachment(uid) {
-	attachments.value = attachments.value.filter((a) => a.uid !== uid);
+/** @param {string} id */
+function removeAttachment(id) {
+	attachments.value = attachments.value.filter((a) => a.uid !== id);
 }
 
 // Bumped per switch so a slow load can't write into a newer session's view.
 let switchSeq = 0;
 
+/** @param {string} name */
 async function switchSession(name) {
 	// A paused run is restored on return (restorePausedRun); only block mid-stream.
 	if (sending.value) return;
@@ -201,6 +222,7 @@ async function switchSession(name) {
 
 	// Attachments are linked to their turn by run; group so each user message
 	// can render its own chips.
+	/** @type {Record<string, Chip[]>} */
 	const attachmentsByRun = {};
 	for (const a of doc.attachments || []) {
 		(attachmentsByRun[a.run] ||= []).push({ file_name: a.file_name, file_size: a.file_size });
@@ -208,6 +230,7 @@ async function switchSession(name) {
 
 	// Merge consecutive assistant rows (one per iteration in the doc) into one
 	// message, as live does — otherwise the tool grouping fragments per iteration.
+	/** @type {AssistantMsg | null} */
 	let current = null;
 	for (const m of doc.messages || []) {
 		if (m.role === "user") {
@@ -215,8 +238,8 @@ async function switchSession(name) {
 			messages.value.push({
 				id: nextId(),
 				role: "user",
-				content: m.content,
-				attachments: attachmentsByRun[m.run] || [],
+				content: m.content ?? "",
+				attachments: (m.run && attachmentsByRun[m.run]) || [],
 			});
 		} else if (m.role === "assistant") {
 			if (!current) current = pushAssistant(false);
@@ -226,7 +249,7 @@ async function switchSession(name) {
 				current.parts.push(makeToolPart(t.id, t.function.name, t.function.arguments));
 			}
 		} else if (m.role === "tool" && current) {
-			setToolResult(current, m.tool_call_id, m.content);
+			setToolResult(current, m.tool_call_id ?? "", m.content ?? null);
 		}
 	}
 
@@ -235,7 +258,8 @@ async function switchSession(name) {
 	// than showing a bare, unanswered bubble.
 	const built = messages.value;
 	for (let i = 0; i < built.length; i++) {
-		if (built[i].role === "user" && built[i + 1]?.role !== "assistant") built[i].interrupted = true;
+		const m = built[i];
+		if (m?.role === "user" && built[i + 1]?.role !== "assistant") m.interrupted = true;
 	}
 
 	await restoreFeedback(name, seq);
@@ -243,34 +267,42 @@ async function switchSession(name) {
 	await restorePausedRun(name);
 }
 
+/**
+ * @param {string} session
+ * @param {number} seq
+ */
 async function restoreFeedback(session, seq) {
 	const runs = await api.getRunFeedback(session).catch(() => []);
 	if (seq !== switchSeq || !runs.length) return;
 	const byRun = new Map(runs.map((r) => [r.name, r]));
 	for (const m of messages.value) {
+		if (m.role !== "assistant") continue;
 		const fb = m.runName && byRun.get(m.runName);
 		if (fb) m.feedback = { rating: fb.feedback_rating, comment: fb.feedback_comment || "" };
 	}
 }
 
+/** @param {string} session */
 async function restorePausedRun(session) {
-	const runs = await api.getPausedRun(session);
-	if (sessionName.value !== session || !runs.length || !runs[0].questions) return;
-	const questions = JSON.parse(runs[0].questions);
+	const pausedRun = (await api.getPausedRun(session))[0];
+	if (sessionName.value !== session || !pausedRun?.questions) return;
+	const questions = JSON.parse(pausedRun.questions);
 	if (!questions.length) return;
 
 	const last = [...messages.value].reverse().find((m) => m.role === "assistant");
 	if (!last) return;
 	last.questions = prepareQuestions(questions);
-	last.runName = runs[0].name;
-	runName.value = runs[0].name;
+	last.runName = pausedRun.name;
+	runName.value = pausedRun.name;
 	requestScroll();
 }
 
 // ── sending / streaming ────────────────────────────────────────────────────────
 // Aborts the in-flight stream when the user stops the response.
+/** @type {AbortController | null} */
 let abortController = null;
 
+/** @param {string} text */
 async function send(text) {
 	text = text.trim();
 	if (!text || sending.value || paused.value || uploading.value) return;
@@ -299,7 +331,7 @@ async function send(text) {
 			abortController.signal,
 		);
 	} catch (e) {
-		if (e.name === "AbortError") assistant.pending = false;
+		if (isAbort(e)) assistant.pending = false;
 		else failMessage(assistant, e);
 	} finally {
 		abortController = null;
@@ -309,8 +341,12 @@ async function send(text) {
 	}
 }
 
+/**
+ * @param {Record<string, string>} answers
+ * @param {AssistantMsg} pausedMsg
+ */
 async function resume(answers, pausedMsg) {
-	const rn = pausedMsg?.runName || runName.value;
+	const rn = pausedMsg.runName || runName.value;
 	if (!rn) return;
 
 	// Stream the resumed turn into the same message so the whole run stays one block
@@ -328,7 +364,7 @@ async function resume(answers, pausedMsg) {
 			abortController.signal,
 		);
 	} catch (e) {
-		if (e.name === "AbortError") pausedMsg.pending = false;
+		if (isAbort(e)) pausedMsg.pending = false;
 		else failMessage(pausedMsg, e);
 	} finally {
 		abortController = null;
@@ -352,6 +388,11 @@ function stopRun() {
 
 // Record thumbs feedback on a finished turn (rating "None" clears it). A Down comment
 // is saved as agent memory server-side. Local state updates only after the server accepts.
+/**
+ * @param {AssistantMsg} msg
+ * @param {string} rating
+ * @param {string} [comment]
+ */
 async function submitFeedback(msg, rating, comment = "") {
 	const result = await api.submitFeedback({
 		run_name: msg.runName,
@@ -365,21 +406,31 @@ async function submitFeedback(msg, rating, comment = "") {
 // Records one answer and stamps the tool's approval state; once every question
 // on the paused message is answered, resumes the run with all answers at once.
 // A Deny is sent through like any answer — the agent records it and stops the run.
+/**
+ * @param {AssistantMsg} msg
+ * @param {Question} question
+ * @param {string} answer
+ */
 function answerQuestion(msg, question, answer) {
 	const a = (answer || "").trim();
 	if (!a || !msg) return;
 
 	question._answer = a;
-	const tool = msg.parts.find((p) => p.type === "tool" && p.id === question.key);
+	const tool = msg.parts.find(isToolPart(question.key));
 	if (tool) tool.approval = a === "Approve" ? "approved" : a === "Deny" ? "denied" : "redirected";
 
 	if (msg.questions.some((q) => q._answer === undefined)) return;
 
+	/** @type {Record<string, string>} */
 	const answers = {};
-	msg.questions.forEach((q) => (answers[q.key] = q._answer));
+	for (const q of msg.questions) answers[q.key] = q._answer ?? "";
 	resume(answers, msg);
 }
 
+/**
+ * @param {RunEvent} event
+ * @param {AssistantMsg} msg
+ */
 function handleEvent(event, msg) {
 	switch (event.type) {
 		case "run_started":
@@ -394,7 +445,7 @@ function handleEvent(event, msg) {
 		case "tool_started": {
 			// Fired twice: once mid-stream (no args yet), then again with the full arguments before
 			// the tool runs. Create the card on the first, fill its arguments on the second.
-			const part = msg.parts.find((p) => p.type === "tool" && p.id === event.id);
+			const part = msg.parts.find(isToolPart(event.id));
 			if (part) part.arguments = event.arguments;
 			else msg.parts.push(makeToolPart(event.id, event.name, event.arguments));
 			requestScroll();
@@ -423,7 +474,14 @@ function handleEvent(event, msg) {
 // ── helpers ──────────────────────────────────────────────────────────────────
 // Single source of the part shapes, shared by the live stream and the session
 // reload so the two paths can't drift apart.
+/** @param {string} text @returns {TextPart} */
 const makeTextPart = (text) => ({ id: nextId(), type: "text", text });
+/**
+ * @param {string} id
+ * @param {string} name
+ * @param {ToolPart["arguments"]} args
+ * @returns {ToolPart}
+ */
 const makeToolPart = (id, name, args) => ({
 	id,
 	type: "tool",
@@ -433,8 +491,26 @@ const makeToolPart = (id, name, args) => ({
 	approval: null,
 });
 
+/**
+ * A `find` predicate for the tool part of a call.
+ * @param {string} id
+ */
+const isToolPart = (id) => {
+	/**
+	 * @param {Part} part
+	 * @returns {part is ToolPart}
+	 */
+	const match = (part) => part.type === "tool" && part.id === id;
+	return match;
+};
+
+/**
+ * @param {AssistantMsg} msg
+ * @param {string} id
+ * @param {string | null} result
+ */
 function setToolResult(msg, id, result) {
-	const part = msg.parts.find((p) => p.type === "tool" && p.id === id);
+	const part = msg.parts.find(isToolPart(id));
 	if (!part) return;
 	part.result = result;
 	// On reload the live approval state is gone; recover it from the persisted
@@ -446,6 +522,10 @@ function setToolResult(msg, id, result) {
 }
 
 // A denied/redirected confirmation persists a known status payload as its tool result.
+/**
+ * @param {unknown} result
+ * @returns {ToolPart["approval"]}
+ */
 function approvalFromResult(result) {
 	if (typeof result !== "string") return null;
 	try {
@@ -458,7 +538,9 @@ function approvalFromResult(result) {
 	return null;
 }
 
+/** @param {boolean} [pending] */
 function pushAssistant(pending = true) {
+	/** @type {AssistantMsg} */
 	const msg = {
 		id: nextId(),
 		role: "assistant",
@@ -471,9 +553,13 @@ function pushAssistant(pending = true) {
 	messages.value.push(msg);
 	// Return the reactive proxy, not the raw object — streaming mutates this after
 	// render, so it must go through the proxy to trigger updates.
-	return messages.value[messages.value.length - 1];
+	return /** @type {AssistantMsg} */ (messages.value[messages.value.length - 1]);
 }
 
+/**
+ * @param {AssistantMsg} msg
+ * @param {string} delta
+ */
 function appendText(msg, delta) {
 	const last = msg.parts[msg.parts.length - 1];
 	// Only open a new text part on real text. A whitespace-only delta between tool calls
@@ -482,11 +568,19 @@ function appendText(msg, delta) {
 	else if (delta.trim()) msg.parts.push(makeTextPart(delta));
 }
 
+/**
+ * @param {AssistantMsg} msg
+ * @param {unknown} error
+ */
 function failMessage(msg, error) {
-	appendText(msg, `\n\n${__("Error")}: ${error.message}`);
+	appendText(msg, `\n\n${__("Error")}: ${errorMessage(error)}`);
 	msg.pending = false;
 }
 
+/**
+ * @param {string | null | undefined} raw
+ * @returns {{ id: string, function: { name: string, arguments: string } }[]}
+ */
 function parseToolCalls(raw) {
 	if (!raw) return [];
 	try {
@@ -496,6 +590,10 @@ function parseToolCalls(raw) {
 	}
 }
 
+/**
+ * @param {Question[] | null | undefined} questions
+ * @returns {Question[]}
+ */
 function prepareQuestions(questions) {
 	return (questions || []).map((q) => ({
 		...q,
@@ -507,6 +605,7 @@ function prepareQuestions(questions) {
 
 // force bypasses the "stick" guard — for explicit actions (sending, approval
 // cards) that must land at the bottom even if the user scrolled up.
+/** @param {boolean} [force] */
 function requestScroll(force = false) {
 	if (force) forceScroll.value = true;
 	scrollTick.value++;

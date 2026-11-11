@@ -1,15 +1,19 @@
 <script setup>
 import { ref, watch, onUnmounted } from "vue";
 
+/** @import { PropType } from "vue" */
+/** @import { TextPart } from "@/lib/types" */
+
 // Renders streamed assistant text as markdown. Parsing the full accumulated
 // string is O(n), so per-token would be O(n²); throttle to one parse per
 // THROTTLE_MS with a guaranteed trailing parse. The model's output is
 // untrusted, so the produced HTML is sanitized before injection.
 // Takes the whole part (not part.text) so only this component reacts per token.
-const props = defineProps({ part: { type: Object, required: true } });
+const props = defineProps({ part: { type: /** @type {PropType<TextPart>} */ (Object), required: true } });
 
 const THROTTLE_MS = 100;
 const html = ref("");
+/** @type {ReturnType<typeof setTimeout> | 0} */
 let timer = 0;
 let last = 0;
 
@@ -23,6 +27,7 @@ const DROPPED = new Set(["SCRIPT", "STYLE", "IFRAME", "OBJECT", "EMBED", "FORM",
 // Leading "/" allows same-origin paths but not "//host" (protocol-relative → external).
 const SAFE_URL = /^(https?:|mailto:|#|\/(?!\/))/i;
 
+/** @param {Element} node */
 function sanitize(node) {
 	for (const el of [...node.children]) {
 		const tag = el.tagName.toUpperCase();
@@ -63,7 +68,10 @@ function render() {
 		html.value = escapeHtml(raw);
 		return;
 	}
-	const doc = new DOMParser().parseFromString(frappe.markdown(raw), "text/html");
+	const doc = new DOMParser().parseFromString(
+		/** @type {NonNullable<typeof frappe.markdown>} */ (frappe.markdown)(raw),
+		"text/html",
+	);
 	sanitize(doc.body);
 	// Let a wide table scroll in its own box instead of widening the panel.
 	for (const table of [...doc.body.querySelectorAll("table")]) {
@@ -83,8 +91,12 @@ function schedule() {
 	else timer = setTimeout(render, THROTTLE_MS - elapsed);
 }
 
+/** @type {Record<string, string>} */
+const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;" };
+
+/** @param {string} s */
 function escapeHtml(s) {
-	return s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+	return s.replace(/[&<>]/g, (c) => HTML_ESCAPES[c] ?? c);
 }
 
 watch(() => props.part.text, schedule, { immediate: true });

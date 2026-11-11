@@ -4,6 +4,15 @@
 // Tool name/args → plain-English labels, context, and value-shape helpers.
 import { __ } from "@/lib/translate";
 
+/**
+ * A tool call's arguments: a JSON string while streaming or after a reload, an object once decoded.
+ * @typedef {string | Record<string, unknown> | null | undefined} ToolArgs
+ */
+
+/**
+ * @param {ToolArgs} args
+ * @returns {Record<string, unknown>}
+ */
 export function parseArgs(args) {
 	if (!args) return {};
 	if (typeof args === "object") return args;
@@ -16,6 +25,7 @@ export function parseArgs(args) {
 
 // The raw argument string when it can't be parsed into fields, so a malformed or
 // truncated payload is shown verbatim rather than silently dropped. "" otherwise.
+/** @param {ToolArgs} args */
 export function rawArgs(args) {
 	if (typeof args !== "string" || !args.trim()) return "";
 	try {
@@ -27,6 +37,7 @@ export function rawArgs(args) {
 }
 
 // snake_case / a name → "Snake case".
+/** @param {unknown} name */
 export function humanize(name) {
 	return String(name || "")
 		.replace(/_/g, " ")
@@ -34,6 +45,7 @@ export function humanize(name) {
 }
 
 // Present-tense label per builtin; custom tools fall back to a humanized name.
+/** @type {Record<string, string>} */
 const LABELS = {
 	find_doctypes: "Finding relevant DocTypes",
 	describe: "Reading DocType Meta",
@@ -46,12 +58,15 @@ const LABELS = {
 	run_action: "Running Document Actions",
 };
 
+/** @param {string} name */
 export function toolLabel(name) {
-	return LABELS[name] ? __(LABELS[name]) : humanize(name);
+	const label = LABELS[name];
+	return label ? __(label) : humanize(name);
 }
 
 // Strip leaked model special tokens (e.g. "describe<|channel|>commentary") so
 // labels and approval lookups see the real tool name.
+/** @param {unknown} name */
 export function normalizeToolName(name) {
 	const clean = String(name || "")
 		.split("<|")[0]
@@ -59,11 +74,13 @@ export function normalizeToolName(name) {
 	return clean || String(name || "").trim();
 }
 
+/** @param {ToolArgs} args */
 export const hasArgs = (args) => Object.keys(parseArgs(args)).length > 0 || Boolean(rawArgs(args));
 
 // The error message when a tool call wholly failed, else null. Two failure shapes:
 // a thrown tool → {error: "..."}; a bulk create/update/delete where every record
 // failed → {created|updated|deleted: [], failures: [{error}, ...]}.
+/** @param {unknown} result */
 export function toolError(result) {
 	if (typeof result !== "string") return null;
 	let parsed;
@@ -91,8 +108,10 @@ export function toolError(result) {
 	return null;
 }
 
+/** @param {unknown} v */
 export const isScalar = (v) => v === null || typeof v !== "object";
 
+/** @param {unknown} v */
 export function formatScalar(v) {
 	if (v === null || v === undefined || v === "") return "—";
 	if (typeof v === "boolean") return v ? __("Yes") : __("No");
@@ -103,6 +122,7 @@ export function formatScalar(v) {
 // Text that must render as a full-width code block rather than inline: multi-line
 // or long. Anything with a newline, or a single line past the limit.
 const LONG_TEXT_LIMIT = 120;
+/** @param {unknown} v */
 export const isBlockText = (v) => typeof v === "string" && (v.includes("\n") || v.length > LONG_TEXT_LIMIT);
 
 const FILTER_OPERATORS = new Set([
@@ -121,6 +141,7 @@ const FILTER_OPERATORS = new Set([
 ]);
 
 // A Frappe filter condition: ["in", [...]] / ["like", "%x%"].
+/** @param {unknown[]} v */
 const isFilterTuple = (v) =>
 	v.length === 2 &&
 	typeof v[0] === "string" &&
@@ -128,6 +149,10 @@ const isFilterTuple = (v) =>
 	(isScalar(v[1]) || (Array.isArray(v[1]) && v[1].every(isScalar)));
 
 // Rendering shape of an argument value (see ArgValue.vue).
+/**
+ * @param {unknown} v
+ * @returns {"empty" | "tuple" | "list" | "records" | "object" | "code" | "scalar"}
+ */
 export function argKind(v) {
 	if (v === null || v === undefined || v === "") return "empty";
 	if (Array.isArray(v)) {
@@ -144,8 +169,11 @@ const TITLE_KEYS = ["title", "name", "subject", "label", "slug"];
 
 // The key used as a record list's title column: a title-ish key on the first
 // record, else its first non-empty scalar field.
+/** @param {unknown[]} records */
 export function recordLabelKey(records) {
-	const first = records.find((r) => r && typeof r === "object" && !Array.isArray(r));
+	const first = /** @type {Record<string, unknown> | undefined} */ (
+		records.find((r) => r && typeof r === "object" && !Array.isArray(r))
+	);
 	if (!first) return null;
 	for (const key of TITLE_KEYS) {
 		if (typeof first[key] === "string" && first[key] && !isBlockText(first[key])) return key;
@@ -158,10 +186,13 @@ export function recordLabelKey(records) {
 
 // Args to always render as a code block regardless of content, keyed by tool name.
 // execute's "code" is Python source even when short/single-line.
+/** @type {Record<string, Set<string>>} */
 const CODE_ARG_KEYS = { execute: new Set(["code"]) };
-export const blockKeysFor = (name) => CODE_ARG_KEYS[name] || new Set();
+/** @param {string | undefined} name */
+export const blockKeysFor = (name) => (name && CODE_ARG_KEYS[name]) || new Set();
 
 // Muted suffix that distinguishes a step (which doctype / search / action).
+/** @param {ToolArgs} args */
 export function toolContext(args) {
 	const a = parseArgs(args);
 	for (const key of ["doctype", "search", "action"]) {
@@ -171,13 +202,25 @@ export function toolContext(args) {
 	return null;
 }
 
+/**
+ * @param {string} one
+ * @param {string} many
+ * @param {number} n
+ * @param {string} doctype
+ */
 const pick = (one, many, n, doctype) => (n === 1 ? __(one, [doctype]) : __(many, [n, doctype]));
 
 // What exactly is being approved, derived from the call's own arguments.
+/**
+ * @param {string} name
+ * @param {ToolArgs} args
+ */
 export function confirmTitle(name, args) {
 	const a = parseArgs(args);
 	const doctype = typeof a.doctype === "string" ? a.doctype : "";
+	/** @param {unknown} v */
 	const count = (v) => (Array.isArray(v) && v.length ? v.length : 1);
+	/** @type {string | null} */
 	let title = null;
 	if (name === "create" && doctype)
 		title = pick("Create 1 {0} record", "Create {0} {1} records", count(a.records), doctype);

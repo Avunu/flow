@@ -8,7 +8,7 @@ const props = defineProps({
 	active: { type: Boolean, default: false },
 });
 
-const sizer = ref(null);
+const sizer = ref(/** @type {HTMLElement | null} */ (null));
 const width = ref("auto");
 
 async function measure() {

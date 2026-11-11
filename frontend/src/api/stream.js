@@ -4,8 +4,16 @@
 import { serverMessage } from "./client";
 import { __ } from "@/lib/translate";
 
+/** @import { RunEvent } from "@/lib/types" */
+
 // Consumes the run SSE stream: POSTs the request, then parses `data:` blocks
 // and hands each decoded event to `onEvent`.
+/**
+ * @param {string} method
+ * @param {Record<string, unknown>} body
+ * @param {(event: RunEvent) => void} onEvent
+ * @param {AbortSignal} signal
+ */
 async function postStream(method, body, onEvent, signal) {
 	const resp = await fetch(`/api/method/${method}`, {
 		method: "POST",
@@ -34,7 +42,7 @@ async function postStream(method, body, onEvent, signal) {
 		buffer += decoder.decode(value, { stream: true });
 
 		const blocks = buffer.split("\n\n");
-		buffer = blocks.pop();
+		buffer = blocks.pop() ?? "";
 		for (const block of blocks) {
 			const line = block.split("\n").find((l) => l.startsWith("data: "));
 			if (line) onEvent(JSON.parse(line.slice(6)));
@@ -42,5 +50,16 @@ async function postStream(method, body, onEvent, signal) {
 	}
 }
 
+/**
+ * @param {Record<string, unknown>} body
+ * @param {(event: RunEvent) => void} onEvent
+ * @param {AbortSignal} signal
+ */
 export const startRun = (body, onEvent, signal) => postStream("flow.api.start_run", body, onEvent, signal);
+
+/**
+ * @param {Record<string, unknown>} body
+ * @param {(event: RunEvent) => void} onEvent
+ * @param {AbortSignal} signal
+ */
 export const resumeRun = (body, onEvent, signal) => postStream("flow.api.resume_run", body, onEvent, signal);

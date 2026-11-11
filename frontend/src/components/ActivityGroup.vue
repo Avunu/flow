@@ -8,14 +8,18 @@ import ToolError from "./ToolError.vue";
 import { toolLabel, hasArgs, toolError } from "@/lib/toolMeta";
 import { __ } from "@/lib/translate";
 
+/** @import { PropType } from "vue" */
+/** @import { ToolPart } from "@/lib/types" */
+
 // Tool calls as one collapsible line: running → active step's label; done → latest
 // label, or "Ran N steps" once `sealed` (text/approval follows). From frappe/flow#9.
 const props = defineProps({
-	parts: { type: Array, required: true },
+	parts: { type: /** @type {PropType<ToolPart[]>} */ (Array), required: true },
 	sealed: { type: Boolean, default: false },
 	live: { type: Boolean, default: false },
 });
 
+/** @param {ToolPart} p */
 const isRunning = (p) => p.result === null && p.approval === null;
 const running = computed(() => props.parts.some(isRunning));
 const single = computed(() => props.parts.length === 1);
@@ -23,7 +27,7 @@ const single = computed(() => props.parts.length === 1);
 const shimmer = computed(() => props.live && !props.sealed);
 
 const summary = computed(() => {
-	if (running.value) return toolLabel(props.parts.find(isRunning).name);
+	if (running.value) return toolLabel(/** @type {ToolPart} */ (props.parts.find(isRunning)).name);
 	if (props.sealed && !single.value) return __("Ran {0} steps", [props.parts.length]);
 	return toolLabel(props.parts[props.parts.length - 1].name);
 });

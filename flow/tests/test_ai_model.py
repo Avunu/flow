@@ -138,7 +138,7 @@ class TestModel(UnitTestCase):
 
 		call = resp.tool_calls[0]
 		self.assertEqual(call.arguments, {})
-		self.assertIn("Invalid JSON", call.error)
+		self.assertIn("Invalid JSON", call.error or "")
 
 	@patch("litellm.completion")
 	def test_chat_stream_yields_text_deltas_and_assembles_response(self, mock_completion):

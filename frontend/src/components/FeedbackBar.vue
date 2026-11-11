@@ -3,9 +3,13 @@ import { ref, computed, nextTick } from "vue";
 import { Button, FeatherIcon } from "@/lib/ui";
 import { useStore } from "@/store";
 import { __ } from "@/lib/translate";
+import { errorMessage } from "@/lib/errors";
+
+/** @import { PropType } from "vue" */
+/** @import { AssistantMsg } from "@/lib/types" */
 
 const props = defineProps({
-	message: { type: Object, required: true },
+	message: { type: /** @type {PropType<AssistantMsg>} */ (Object), required: true },
 	hovered: { type: Boolean, default: false },
 });
 const { submitFeedback } = useStore();
@@ -15,7 +19,7 @@ const COMMENT_LIMIT = 500;
 const open = ref(false);
 const comment = ref("");
 const submitting = ref(false);
-const commentEl = ref(null);
+const commentEl = ref(/** @type {HTMLTextAreaElement | null} */ (null));
 
 const rating = computed(() => props.message.feedback?.rating || null);
 // Hidden until hover; stays visible once rated or while the comment form is open.
@@ -48,6 +52,10 @@ async function sendDown() {
 }
 
 // A Down comment is turned into agent memory server-side; the toast reflects that.
+/**
+ * @param {string} value
+ * @param {string} [text]
+ */
 async function submit(value, text = "") {
 	if (submitting.value) return;
 	submitting.value = true;
@@ -58,7 +66,7 @@ async function submit(value, text = "") {
 		}
 	} catch (e) {
 		frappe.show_alert({
-			message: e?.message || __("Could not save feedback."),
+			message: errorMessage(e) || __("Could not save feedback."),
 			indicator: "red",
 		});
 	} finally {

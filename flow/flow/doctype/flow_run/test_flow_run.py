@@ -2,12 +2,27 @@
 # See license.txt
 
 import json
+from collections.abc import Callable, Generator
+from types import SimpleNamespace
+from typing import Any, cast
+from unittest.mock import patch
 
 import frappe
 from frappe.tests import IntegrationTestCase
+from frappe.utils import CallbackManager
 
-from flow.flow.doctype.flow_run.flow_run import create_run, persist_result
-from flow.lib.agent import Question, RunResult
+from flow.flow.doctype.flow_agent.flow_agent import FlowAgent
+from flow.flow.doctype.flow_model.flow_model import FlowModel
+from flow.flow.doctype.flow_run.flow_run import (
+	Error,
+	FlowRun,
+	RunStarted,
+	create_run,
+	persist_result,
+	stream_with_persistence,
+)
+from flow.flow.doctype.flow_session.flow_session import FlowSession
+from flow.lib.agent import Done, Question, RunResult, TextChunk
 from flow.lib.model import ToolCall
 
 
@@ -68,23 +83,29 @@ def _paused_result() -> RunResult:
 
 
 def _make_agent() -> str:
-	model = frappe.get_doc(
-		{
-			"doctype": "Flow Model",
-			"title": "Run Test Model",
-			"model_id": "openai/gpt-4o-mini",
-			"enabled": 1,
-		}
-	).insert()
-	return (
+	model = cast(
+		FlowModel,
 		frappe.get_doc(
 			{
-				"doctype": "Flow Agent",
-				"title": "Run Test Agent",
-				"model": model.name,
-				"instructions": "x",
+				"doctype": "Flow Model",
+				"title": "Run Test Model",
+				"model_id": "openai/gpt-4o-mini",
 				"enabled": 1,
 			}
+		),
+	).insert()
+	return str(
+		cast(
+			FlowAgent,
+			frappe.get_doc(
+				{
+					"doctype": "Flow Agent",
+					"title": "Run Test Agent",
+					"model": model.name,
+					"instructions": "x",
+					"enabled": 1,
+				}
+			),
 		)
 		.insert()
 		.name
@@ -92,8 +113,8 @@ def _make_agent() -> str:
 
 
 def _new_session(agent: str) -> str:
-	return (
-		frappe.get_doc({"doctype": "Flow Session", "agent": agent, "title": "test"})
+	return str(
+		cast(FlowSession, frappe.get_doc({"doctype": "Flow Session", "agent": agent, "title": "test"}))
 		.insert(ignore_permissions=True)
 		.name
 	)
@@ -114,7 +135,7 @@ class TestFlowRunPersistence(IntegrationTestCase):
 		self.assertEqual(doc.iterations, 1)
 		self.assertEqual(doc.output, "all done")
 
-		session_doc = frappe.get_doc("Flow Session", session)
+		session_doc = cast(FlowSession, frappe.get_doc("Flow Session", session))
 		self.assertEqual(len(session_doc.messages), 2)
 		self.assertEqual(session_doc.messages[0].role, "user")
 		self.assertEqual(session_doc.messages[0].content, "hi")
@@ -125,14 +146,14 @@ class TestFlowRunPersistence(IntegrationTestCase):
 		session = _new_session(self.agent)
 		doc = persist_result(_tooled_result(), source="Manual", input="email customers", session=session)
 
-		tool_calls = json.loads(doc.tool_calls)
+		tool_calls = json.loads(doc.tool_calls or "")
 		self.assertEqual(tool_calls, [{"id": "c1", "name": "read", "arguments": {"doctype": "Customer"}}])
 
 	def test_persist_tooled_run_writes_all_messages_to_session(self):
 		session = _new_session(self.agent)
 		doc = persist_result(_tooled_result(), source="Manual", input="email customers", session=session)
 
-		session_doc = frappe.get_doc("Flow Session", session)
+		session_doc = cast(FlowSession, frappe.get_doc("Flow Session", session))
 		roles = [row.role for row in session_doc.messages]
 		self.assertEqual(roles, ["user", "assistant", "tool", "assistant"])
 		# Tool result row records which assistant call it answers.
@@ -140,7 +161,7 @@ class TestFlowRunPersistence(IntegrationTestCase):
 		self.assertEqual(tool_row.tool_call_id, "c1")
 		# Assistant row with tool calls stores them as JSON.
 		assistant_row = session_doc.messages[1]
-		self.assertEqual(json.loads(assistant_row.tool_calls)[0]["function"]["name"], "read")
+		self.assertEqual(json.loads(assistant_row.tool_calls or "")[0]["function"]["name"], "read")
 		# All rows tagged with the producing run.
 		self.assertTrue(all(row.run == doc.name for row in session_doc.messages))
 
@@ -150,7 +171,7 @@ class TestFlowRunPersistence(IntegrationTestCase):
 
 		self.assertEqual(doc.status, "Paused")
 		self.assertIsNone(doc.output)
-		questions = json.loads(doc.questions)
+		questions = json.loads(doc.questions or "")
 		self.assertEqual(len(questions), 1)
 		self.assertEqual(questions[0]["prompt"], "Approve `execute`?")
 		self.assertEqual(questions[0]["options"], ["Approve", "Deny"])
@@ -171,14 +192,14 @@ class TestFlowRunPersistence(IntegrationTestCase):
 		session = _new_session(self.agent)
 		doc = persist_result(_paused_result(), source="Manual", input="delete the records", session=session)
 		self.assertEqual(doc.iterations, 1)
-		self.assertEqual(json.loads(doc.usage)["total_tokens"], 6)
+		self.assertEqual(json.loads(doc.usage or "")["total_tokens"], 6)
 
 		doc.apply_result(_completed_result("emailed"))
 
 		# A resumed run continues the same row: counts span both segments.
 		self.assertEqual(doc.iterations, 2)
 		self.assertEqual(
-			json.loads(doc.usage), {"prompt_tokens": 7, "completion_tokens": 4, "total_tokens": 11}
+			json.loads(doc.usage or ""), {"prompt_tokens": 7, "completion_tokens": 4, "total_tokens": 11}
 		)
 
 	def test_persist_records_usage(self):
@@ -186,7 +207,7 @@ class TestFlowRunPersistence(IntegrationTestCase):
 		doc = persist_result(_tooled_result(), source="Manual", input="x", session=session)
 
 		self.assertEqual(
-			json.loads(doc.usage), {"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14}
+			json.loads(doc.usage or ""), {"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14}
 		)
 
 	def test_create_run_with_config_snapshot(self):
@@ -194,7 +215,7 @@ class TestFlowRunPersistence(IntegrationTestCase):
 		snapshot = {"instructions": "be terse", "tool_slugs": ["read", "execute"]}
 		doc = create_run(source="Manual", input="hi", session=session, config_snapshot=snapshot)
 
-		self.assertEqual(json.loads(doc.config_snapshot), snapshot)
+		self.assertEqual(json.loads(doc.config_snapshot or ""), snapshot)
 		self.assertEqual(doc.status, "Running")
 
 	def test_mark_failed_sets_status_and_error(self):
@@ -212,7 +233,7 @@ class TestFlowRunPersistence(IntegrationTestCase):
 
 		doc.mark_failed("x" * 10000)
 
-		self.assertEqual(len(doc.error), 5000)
+		self.assertEqual(len(doc.error or ""), 5000)
 
 
 class TestFlowRunValidation(IntegrationTestCase):
@@ -223,44 +244,163 @@ class TestFlowRunValidation(IntegrationTestCase):
 		frappe.db.rollback()
 
 	def test_session_is_required(self):
-		doc = frappe.get_doc({"doctype": "Flow Run", "source": "Manual", "status": "Running"})
+		doc = cast(FlowRun, frappe.get_doc({"doctype": "Flow Run", "source": "Manual", "status": "Running"}))
 		with self.assertRaises(frappe.MandatoryError):
 			doc.insert(ignore_permissions=True)
 
 	def test_paused_without_questions_rejected(self):
 		session = _new_session(self.agent)
-		doc = frappe.get_doc(
-			{"doctype": "Flow Run", "source": "Manual", "status": "Paused", "session": session}
+		doc = cast(
+			FlowRun,
+			frappe.get_doc(
+				{"doctype": "Flow Run", "source": "Manual", "status": "Paused", "session": session}
+			),
 		)
 		with self.assertRaisesRegex(frappe.ValidationError, "Paused"):
 			doc.insert(ignore_permissions=True)
 
 	def test_failed_without_error_rejected(self):
 		session = _new_session(self.agent)
-		doc = frappe.get_doc(
-			{"doctype": "Flow Run", "source": "Manual", "status": "Failed", "session": session}
+		doc = cast(
+			FlowRun,
+			frappe.get_doc(
+				{"doctype": "Flow Run", "source": "Manual", "status": "Failed", "session": session}
+			),
 		)
 		with self.assertRaisesRegex(frappe.ValidationError, "Failed"):
 			doc.insert(ignore_permissions=True)
 
 	def test_invalid_source_rejected(self):
 		session = _new_session(self.agent)
-		doc = frappe.get_doc(
-			{"doctype": "Flow Run", "source": "Bogus", "status": "Running", "session": session}
+		doc = cast(
+			FlowRun,
+			frappe.get_doc(
+				{"doctype": "Flow Run", "source": "Bogus", "status": "Running", "session": session}
+			),
 		)
 		with self.assertRaises(frappe.ValidationError):
 			doc.insert(ignore_permissions=True)
 
 	def test_invalid_json_field_rejected(self):
 		session = _new_session(self.agent)
-		doc = frappe.get_doc(
-			{
-				"doctype": "Flow Run",
-				"source": "Manual",
-				"status": "Running",
-				"session": session,
-				"tool_calls": "{not valid json",
-			}
+		doc = cast(
+			FlowRun,
+			frappe.get_doc(
+				{
+					"doctype": "Flow Run",
+					"source": "Manual",
+					"status": "Running",
+					"session": session,
+					"tool_calls": "{not valid json",
+				}
+			),
 		)
 		with self.assertRaisesRegex(frappe.ValidationError, "JSON"):
 			doc.insert(ignore_permissions=True)
+
+
+def _stream(*events: Any, then: Exception | None = None) -> Callable[[], Generator[Any]]:
+	"""A make_events factory that yields `events`, then raises `then` if given."""
+
+	def make_events() -> Generator[Any]:
+		yield from events
+		if then is not None:
+			raise then
+
+	return make_events
+
+
+class TestStreamWithPersistence(IntegrationTestCase):
+	"""The run's outcome is written as its stream ends and committed by commit_after_response."""
+
+	def setUp(self):
+		session = _new_session(_make_agent())
+		self.flow_run = create_run(source="Manual", input="hi", session=session)
+
+	def tearDown(self):
+		frappe.flags.flow_run = None
+		frappe.db.rollback()
+
+	def _stored(self) -> FlowRun:
+		return cast(FlowRun, frappe.get_doc("Flow Run", str(self.flow_run.name)))
+
+	def test_done_completes_the_run(self):
+		events = list(
+			stream_with_persistence(_stream(TextChunk("a"), Done(_completed_result())), self.flow_run)
+		)
+
+		started = events[0]
+		assert isinstance(started, RunStarted)
+		self.assertEqual(started.name, self.flow_run.name)
+		self.assertIsInstance(events[-1], Done)
+		self.assertEqual(self._stored().status, "Completed")
+		self.assertEqual(self._stored().output, "all done")
+
+	def test_raised_error_fails_the_run_and_is_emitted(self):
+		events = list(stream_with_persistence(_stream(then=RuntimeError("model blew up")), self.flow_run))
+
+		error = events[-1]
+		assert isinstance(error, Error)
+		self.assertEqual(error.message, "model blew up")
+		stored = self._stored()
+		self.assertEqual(stored.status, "Failed")
+		self.assertEqual(stored.error, "model blew up")
+
+	def test_stream_ending_without_done_fails_the_run(self):
+		list(stream_with_persistence(_stream(TextChunk("a")), self.flow_run))
+
+		stored = self._stored()
+		self.assertEqual(stored.status, "Failed")
+		self.assertEqual(stored.error, "Stream interrupted")
+
+	def test_closing_the_stream_early_fails_the_run(self):
+		stream = stream_with_persistence(_stream(TextChunk("a"), TextChunk("b")), self.flow_run)
+		next(stream)  # RunStarted
+		next(stream)  # first chunk
+		stream.close()  # the client went away
+
+		stored = self._stored()
+		self.assertEqual(stored.status, "Failed")
+		self.assertEqual(stored.error, "Stream interrupted")
+
+	def test_result_that_cannot_be_applied_fails_the_run(self):
+		with patch.object(FlowRun, "apply_result", side_effect=RuntimeError("cannot save")):
+			list(stream_with_persistence(_stream(Done(_completed_result())), self.flow_run))
+
+		stored = self._stored()
+		self.assertEqual(stored.status, "Failed")
+		self.assertEqual(stored.error, "cannot save")
+
+	def test_clears_the_active_run_flag(self):
+		frappe.flags.flow_run = self.flow_run.name
+		list(stream_with_persistence(_stream(Done(_completed_result())), self.flow_run))
+		self.assertIsNone(frappe.flags.flow_run)
+
+	def test_outcome_is_deferred_to_commit_after_response(self):
+		scheduled: list[Callable[[], None]] = []
+		with patch("flow.flow.doctype.flow_run.flow_run.commit_after_response", side_effect=scheduled.append):
+			list(stream_with_persistence(_stream(Done(_completed_result())), self.flow_run))
+
+			# Nothing is written while the response body is still open...
+			self.assertEqual(len(scheduled), 1)
+			self.assertEqual(self._stored().status, "Running")
+			# ...and the scheduled step writes the outcome.
+			scheduled[0]()
+		self.assertEqual(self._stored().status, "Completed")
+
+	def test_request_commits_once_after_the_response_closes(self):
+		request = SimpleNamespace(after_response=CallbackManager())
+		# Outside tests commit_after_response defers to the request's after-response callbacks.
+		with (
+			patch.object(frappe, "in_test", False),
+			patch.object(frappe.local, "request", request, create=True),
+			patch.object(frappe.db, "commit") as commit,
+		):
+			list(stream_with_persistence(_stream(Done(_completed_result())), self.flow_run))
+			commit.assert_not_called()
+			self.assertEqual(self._stored().status, "Running")
+
+			request.after_response.run()
+
+			commit.assert_called_once_with()
+		self.assertEqual(self._stored().status, "Completed")
