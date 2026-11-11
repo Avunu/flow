@@ -317,7 +317,7 @@ class TestResumeRun(IntegrationTestCase):
 	def test_resume_failure_marks_run_failed(self):
 		run_name = self._pause(agent=self.agent.name)
 
-		with patch.object(Model, "chat", side_effect=RuntimeError("boom")):
+		with patch.object(Model, "chat", side_effect=RuntimeError("boom")):  # noqa: SIM117
 			with self.assertRaises(RuntimeError):
 				resume_run(run_name, {"c1": "use a different approach"})
 
@@ -429,7 +429,7 @@ class TestStartRunSessions(IntegrationTestCase):
 
 		self.assertEqual(first["status"], "Paused")
 
-		with patch.object(Model, "chat", return_value=_final()):
+		with patch.object(Model, "chat", return_value=_final()):  # noqa: SIM117
 			with self.assertRaisesRegex(frappe.ValidationError, "paused"):
 				start_run("nevermind", session=first["session"])
 

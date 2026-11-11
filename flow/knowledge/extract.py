@@ -158,7 +158,7 @@ def _extract_xlsx(data: bytes) -> str:
 				if cells:
 					rows.append("\t".join(cells))
 			if rows:
-				sheets.append("# {0}\n{1}".format(worksheet.title, "\n".join(rows)))
+				sheets.append("# {0}\n{1}".format(worksheet.title, "\n".join(rows)))  # noqa: UP030
 		return "\n\n".join(sheets)
 	finally:
 		workbook.close()

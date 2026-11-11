@@ -70,7 +70,7 @@ def _unwrap_optional(t: Any) -> tuple[Any, bool]:
 		return remaining[0], True
 	if not remaining:
 		return Any, True
-	return Union[remaining], True
+	return Union[remaining], True  # noqa: UP007
 
 
 def _inline_pydantic_refs(schema: dict[str, Any]) -> dict[str, Any]:

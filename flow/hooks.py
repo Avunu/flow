@@ -11,7 +11,7 @@ export_python_type_annotations = True
 # /assets path bypasses the desk's esbuild pipeline. Run `yarn build` in the app root.
 # /assets URLs get no cache-busting query from Frappe, so append ?v=<mtime>:
 # the stable filename keeps the hook simple while a rebuild invalidates the cache.
-import os as _os
+import os as _os  # noqa: E402
 
 
 def _flow_panel_asset(filename: str) -> str:

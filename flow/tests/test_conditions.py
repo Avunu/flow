@@ -60,9 +60,9 @@ class TestEvaluateCondition(IntegrationTestCase):
 		self.assertTrue(evaluate_condition(condition, {"doc": frappe._dict(name=todo.name)}))
 
 	def test_runtime_error_raises(self):
-		with self.assertRaises(Exception):
+		with self.assertRaises(Exception):  # noqa: B017
 			evaluate_condition("undefined_name > 1", {"doc": frappe._dict()})
 
 	def test_sandbox_blocks_imports(self):
-		with self.assertRaises(Exception):
+		with self.assertRaises(Exception):  # noqa: B017
 			evaluate_condition("import os\nresult = True", {"doc": frappe._dict()})
