@@ -100,3 +100,8 @@ exclude = [".venv/", "node_modules/", ".frappe-nix/", ".dev-dist/", ".devenv/", 
 
 [tool.test_utils.static-analysis]
 whitelist = ["frappe.*"]
+
+# oxfmt reflows HTML, and these are Jinja templates whose rendered whitespace matters, so oxfmt
+# leaves them alone.
+[tool.frappe-nix.js.oxfmt]
+ignore = ["**/*.html"]
