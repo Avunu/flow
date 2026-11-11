@@ -31,11 +31,11 @@ app_include_css = [_flow_panel_asset("flow_panel.css")]
 
 doc_events = {
 	"*": {
-		"after_insert": "flow.triggers.dispatch",
-		"on_update": "flow.triggers.dispatch",
-		"on_submit": "flow.triggers.dispatch",
-		"on_cancel": "flow.triggers.dispatch",
-		"on_trash": "flow.triggers.dispatch",
+		"after_insert": "flow.triggers.dispatch",  # frappe-vulture:ignore
+		"on_update": "flow.triggers.dispatch",  # frappe-vulture:ignore
+		"on_submit": "flow.triggers.dispatch",  # frappe-vulture:ignore
+		"on_cancel": "flow.triggers.dispatch",  # frappe-vulture:ignore
+		"on_trash": "flow.triggers.dispatch",  # frappe-vulture:ignore
 	}
 }
 
@@ -55,11 +55,11 @@ scheduler_events = {
 	],
 	"cron": {
 		"*/5 * * * *": [
-			"flow.triggers.dispatch_scheduled",
+			"flow.triggers.dispatch_scheduled",  # frappe-vulture:ignore
 		],
 	},
 }
 
-after_migrate = ["flow.assistant.sync_builtin_assistant"]
+after_migrate = ["flow.assistant.sync_builtin_assistant"]  # frappe-vulture:ignore
 
 extend_bootinfo = "flow.boot.boot_session"

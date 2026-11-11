@@ -33,5 +33,5 @@ class FlowKnowledgeBase(Document):
 	def on_trash(self):
 		block_delete(self)
 
-	def before_rename(self, old: str, new: str, merge: bool = False) -> None:
+	def before_rename(self, old: str, new: str, merge: bool = False) -> None:  # frappe-vulture:ignore
 		block_rename(self, old)

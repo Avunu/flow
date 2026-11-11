@@ -680,7 +680,7 @@ class TestAgentConfirmation(UnitTestCase):
 			requires_confirmation=True,
 			confirm_prompt=lambda args: f"Send email to {args['to']}",
 		)
-		def send_email(to: str, body: str) -> str:
+		def send_email(to: str, body: str) -> str:  # frappe-vulture:ignore
 			"""Send an email."""
 			return "sent"
 

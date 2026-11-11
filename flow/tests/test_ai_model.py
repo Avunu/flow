@@ -58,7 +58,7 @@ class TestModel(UnitTestCase):
 			model_id="anthropic/claude-sonnet-4-6",
 			base_url=None,
 			params='{"temperature": 0.3}',
-			get_password=lambda field, raise_exception=False: "sk-stored",
+			get_password=lambda field, raise_exception=False: "sk-stored",  # frappe-vulture:ignore
 		)
 		mock_get_doc.return_value = mock_doc
 
@@ -76,7 +76,7 @@ class TestModel(UnitTestCase):
 			model_id="anthropic/claude-sonnet-4-6",
 			base_url=None,
 			params=None,
-			get_password=lambda field, raise_exception=False: "sk-stored",
+			get_password=lambda field, raise_exception=False: "sk-stored",  # frappe-vulture:ignore
 		)
 		with self.assertRaises(ValueError):
 			Model("Disabled Model")
