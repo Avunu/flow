@@ -84,11 +84,6 @@ enable = false
 [tool.frappe-nix.demo]
 enable = false
 
-# Temporary, removed in PR B: ty reports 696 diagnostics (157 in the app, 539 in the tests, mostly
-# frappe.get_doc returning a generic Document), so its stage in frappe-test is off until they are fixed.
-[tool.frappe-nix.python-types]
-enable = false
-
 [tool.coverage.run]
 omit = ["*/tests/*", "*/test_*.py", "*/patches/*"]
 
@@ -168,3 +163,12 @@ reason = "Not yet tested; a test is the next PR's work"
 [[tool.frappe-nix.untested]]
 target = "flow.flow.doctype.flow_model.flow_model.get_provider_models"
 reason = "Not yet tested; a test is the next PR's work"
+
+[tool.ty.environment]
+python-version = "3.14"
+
+[tool.ty.src]
+include = ["flow"]
+
+[tool.ty.terminal]
+error-on-warning = true
