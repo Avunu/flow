@@ -34,8 +34,7 @@ export const searchSessions = (query) =>
 		limit: 20,
 	});
 
-export const getSession = (name) =>
-	frappe.xcall("frappe.client.get", { doctype: "Flow Session", name });
+export const getSession = (name) => frappe.xcall("frappe.client.get", { doctype: "Flow Session", name });
 
 export const getPausedRun = (session) =>
 	getList("Flow Run", {

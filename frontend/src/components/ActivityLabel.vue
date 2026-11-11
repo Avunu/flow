@@ -21,10 +21,7 @@ onMounted(measure);
 </script>
 
 <template>
-	<span
-		class="flow-label relative inline-grid items-center overflow-hidden align-bottom"
-		:style="{ width }"
-	>
+	<span class="flow-label relative inline-grid items-center overflow-hidden align-bottom" :style="{ width }">
 		<span
 			ref="sizer"
 			class="invisible col-start-1 row-start-1 w-fit justify-self-start whitespace-nowrap"

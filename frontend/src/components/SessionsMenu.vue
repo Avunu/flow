@@ -83,20 +83,13 @@ function timeAgo(ds) {
 						class="flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left hover:bg-surface-gray-2"
 						@click="choose(s.name)"
 					>
-						<span class="flex-1 truncate text-sm text-ink-gray-8">{{
-							s.title || s.name
-						}}</span>
-						<span class="shrink-0 text-[11px] text-ink-gray-5">{{
-							timeAgo(s.modified)
-						}}</span>
+						<span class="flex-1 truncate text-sm text-ink-gray-8">{{ s.title || s.name }}</span>
+						<span class="shrink-0 text-[11px] text-ink-gray-5">{{ timeAgo(s.modified) }}</span>
 					</button>
 					<div v-if="searching" class="px-2 py-4 text-center text-xs text-ink-gray-5">
 						{{ __("Searching…") }}
 					</div>
-					<div
-						v-else-if="!list.length"
-						class="px-2 py-4 text-center text-xs text-ink-gray-5"
-					>
+					<div v-else-if="!list.length" class="px-2 py-4 text-center text-xs text-ink-gray-5">
 						{{ query.trim() ? __("No matching sessions") : __("No recent sessions") }}
 					</div>
 				</div>

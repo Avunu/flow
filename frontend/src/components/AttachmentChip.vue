@@ -20,7 +20,7 @@ const sizeLabel = computed(() => {
 });
 
 const title = computed(() =>
-	props.status === "error" ? props.error || __("Couldn't attach file") : props.fileName
+	props.status === "error" ? props.error || __("Couldn't attach file") : props.fileName,
 );
 </script>
 
@@ -36,9 +36,7 @@ const title = computed(() =>
 				{{ fileName }}
 			</div>
 			<div class="text-[10.5px] leading-tight text-ink-gray-5">
-				<span v-if="status === 'error'" class="font-medium text-ink-gray-7">{{
-					__("Failed")
-				}}</span>
+				<span v-if="status === 'error'" class="font-medium text-ink-gray-7">{{ __("Failed") }}</span>
 				<span v-else-if="status === 'uploading'">{{ __("Uploading…") }}</span>
 				<span v-else>{{ sizeLabel }}</span>
 			</div>

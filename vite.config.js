@@ -22,9 +22,7 @@ export default defineConfig({
 			// individual components without dragging in the whole index (tiptap, echarts, …).
 			{
 				find: "frappe-ui/src",
-				replacement: fileURLToPath(
-					new URL("./node_modules/frappe-ui/src", import.meta.url)
-				),
+				replacement: fileURLToPath(new URL("./node_modules/frappe-ui/src", import.meta.url)),
 			},
 		],
 	},

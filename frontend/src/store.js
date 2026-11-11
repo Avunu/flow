@@ -64,7 +64,7 @@ async function loadInitial() {
 		agents.value = a;
 		models.value = m;
 		const assistant = a.find((x) => x.name === "Flow");
-		selectedAgent.value = assistant ? assistant.name : a[0]?.name ?? null;
+		selectedAgent.value = assistant ? assistant.name : (a[0]?.name ?? null);
 		loadToolApproval(selectedAgent.value);
 		loaded.value = true;
 		focusTick.value++;
@@ -232,8 +232,7 @@ async function switchSession(name) {
 	// than showing a bare, unanswered bubble.
 	const built = messages.value;
 	for (let i = 0; i < built.length; i++) {
-		if (built[i].role === "user" && built[i + 1]?.role !== "assistant")
-			built[i].interrupted = true;
+		if (built[i].role === "user" && built[i + 1]?.role !== "assistant") built[i].interrupted = true;
 	}
 
 	await restoreFeedback(name, seq);
@@ -294,7 +293,7 @@ async function send(text) {
 				...(selectedModel.value && { model: selectedModel.value }),
 			},
 			(event) => handleEvent(event, assistant),
-			abortController.signal
+			abortController.signal,
 		);
 	} catch (e) {
 		if (e.name === "AbortError") assistant.pending = false;
@@ -323,7 +322,7 @@ async function resume(answers, pausedMsg) {
 		await resumeRun(
 			{ run_name: rn, answers },
 			(event) => handleEvent(event, pausedMsg),
-			abortController.signal
+			abortController.signal,
 		);
 	} catch (e) {
 		if (e.name === "AbortError") pausedMsg.pending = false;
@@ -369,8 +368,7 @@ function answerQuestion(msg, question, answer) {
 
 	question._answer = a;
 	const tool = msg.parts.find((p) => p.type === "tool" && p.id === question.key);
-	if (tool)
-		tool.approval = a === "Approve" ? "approved" : a === "Deny" ? "denied" : "redirected";
+	if (tool) tool.approval = a === "Approve" ? "approved" : a === "Deny" ? "denied" : "redirected";
 
 	if (msg.questions.some((q) => q._answer === undefined)) return;
 

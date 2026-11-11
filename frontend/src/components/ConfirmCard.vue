@@ -14,15 +14,13 @@ const emit = defineEmits(["answer"]);
 const otherEl = ref(null);
 
 // Tool confirmation: name the specific action; free-text ask: show the prompt.
-const confirm = computed(() =>
-	props.tool ? confirmTitle(props.tool.name, props.tool.arguments) : null
-);
+const confirm = computed(() => (props.tool ? confirmTitle(props.tool.name, props.tool.arguments) : null));
 const title = computed(() =>
-	confirm.value ? confirm.value.title : props.question.prompt.split("\n\n")[0].trim()
+	confirm.value ? confirm.value.title : props.question.prompt.split("\n\n")[0].trim(),
 );
 const danger = computed(() => Boolean(confirm.value?.danger));
 const body = computed(() =>
-	props.tool ? "" : props.question.prompt.split("\n\n").slice(1).join("\n\n").trim()
+	props.tool ? "" : props.question.prompt.split("\n\n").slice(1).join("\n\n").trim(),
 );
 // execute's description becomes the title, so drop it from the args shown below.
 const displayArgs = computed(() => {
@@ -80,10 +78,7 @@ function sendOther() {
 		</div>
 		<pre v-else-if="body" class="flow-confirm-body">{{ body }}</pre>
 
-		<div
-			v-if="answered"
-			class="mt-2 flex items-center justify-end gap-1.5 text-xs text-ink-gray-6"
-		>
+		<div v-if="answered" class="mt-2 flex items-center justify-end gap-1.5 text-xs text-ink-gray-6">
 			<FeatherIcon name="check" class="h-3 w-3" />
 			<span class="truncate">{{ optLabel(question._answer) }}</span>
 		</div>

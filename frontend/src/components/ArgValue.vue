@@ -25,7 +25,7 @@ const TABLE = new Set(["scalar", "empty", "tuple", "code"]);
 const isFull = (kind) => kind === "code";
 
 const entries = computed(() =>
-	Object.entries(props.value).map(([key, value]) => ({ key, value, kind: kindFor(key, value) }))
+	Object.entries(props.value).map(([key, value]) => ({ key, value, kind: kindFor(key, value) })),
 );
 const tableRows = computed(() => entries.value.filter((e) => TABLE.has(e.kind)));
 const blocks = computed(() => entries.value.filter((e) => !TABLE.has(e.kind)));
@@ -53,10 +53,7 @@ const tupleValues = (v) => (Array.isArray(v[1]) ? v[1] : [v[1]]).map(formatScala
 					<CodeBlock :code="String(row.value)" />
 				</div>
 				<template v-else>
-					<div
-						class="border-r border-outline-gray-1 px-3 py-1.5 text-ink-gray-5"
-						:class="{ 'border-t': i }"
-					>
+					<div class="border-r border-outline-gray-1 px-3 py-1.5 text-ink-gray-5" :class="{ 'border-t': i }">
 						{{ humanize(row.key) }}
 					</div>
 					<div
@@ -75,9 +72,7 @@ const tupleValues = (v) => (Array.isArray(v[1]) ? v[1] : [v[1]]).map(formatScala
 		</div>
 
 		<div v-for="s in blocks" :key="s.key">
-			<div
-				class="mb-2 pb-0 text-[11px] font-semibold uppercase leading-none tracking-wide text-ink-gray-4"
-			>
+			<div class="mb-2 pb-0 text-[11px] font-semibold uppercase leading-none tracking-wide text-ink-gray-4">
 				{{ humanize(s.key) }}
 			</div>
 			<ChipList v-if="s.kind === 'list'" :items="s.value" />

@@ -75,7 +75,7 @@ export function toolError(result) {
 	const failures = parsed.failures;
 	if (Array.isArray(failures) && failures.length) {
 		const succeeded = [parsed.created, parsed.updated, parsed.deleted].some(
-			(a) => Array.isArray(a) && a.length
+			(a) => Array.isArray(a) && a.length,
 		);
 		if (!succeeded) {
 			const msg = failures
@@ -100,8 +100,7 @@ export function formatScalar(v) {
 // Text that must render as a full-width code block rather than inline: multi-line
 // or long. Anything with a newline, or a single line past the limit.
 const LONG_TEXT_LIMIT = 120;
-export const isBlockText = (v) =>
-	typeof v === "string" && (v.includes("\n") || v.length > LONG_TEXT_LIMIT);
+export const isBlockText = (v) => typeof v === "string" && (v.includes("\n") || v.length > LONG_TEXT_LIMIT);
 
 const FILTER_OPERATORS = new Set([
 	"=",
@@ -149,7 +148,7 @@ export function recordLabelKey(records) {
 		if (typeof first[key] === "string" && first[key] && !isBlockText(first[key])) return key;
 	}
 	const entry = Object.entries(first).find(
-		([, v]) => isScalar(v) && v !== null && v !== "" && !isBlockText(v)
+		([, v]) => isScalar(v) && v !== null && v !== "" && !isBlockText(v),
 	);
 	return entry ? entry[0] : null;
 }
@@ -189,7 +188,6 @@ export function confirmTitle(name, args) {
 			doctype ? `${count(a.names)} ${doctype}` : __("records"),
 		]);
 	else if (name === "execute")
-		title =
-			(typeof a.description === "string" && a.description.trim()) || __("Run Python code");
+		title = (typeof a.description === "string" && a.description.trim()) || __("Run Python code");
 	return { title: title || toolLabel(name), danger: name === "delete" };
 }

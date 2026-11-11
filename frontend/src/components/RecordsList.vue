@@ -50,9 +50,7 @@ const rows = computed(() => {
 		}
 		const key = labelKey.value;
 		const title =
-			key && item[key] != null && item[key] !== ""
-				? String(item[key])
-				: __("Record {0}", [i + 1]);
+			key && item[key] != null && item[key] !== "" ? String(item[key]) : __("Record {0}", [i + 1]);
 		return { title, rest: Object.keys(rest).length ? rest : null };
 	});
 });

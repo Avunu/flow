@@ -31,7 +31,7 @@ const {
 
 // Backend (flow/boot.py) is the single source of truth for supported file types.
 const ACCEPT = computed(() =>
-	(frappe.boot.flow_supported_file_types || []).map((ext) => `.${ext}`).join(",")
+	(frappe.boot.flow_supported_file_types || []).map((ext) => `.${ext}`).join(","),
 );
 
 const text = ref("");
@@ -39,9 +39,7 @@ const el = ref(null);
 const fileInput = ref(null);
 const dragging = ref(false);
 
-const inputDisabled = computed(
-	() => !loaded.value || sending.value || paused.value || needsSetup.value
-);
+const inputDisabled = computed(() => !loaded.value || sending.value || paused.value || needsSetup.value);
 
 const agentItems = computed(() => agents.value.map((a) => ({ value: a.name, label: a.title })));
 const modelItems = computed(() => [
@@ -149,14 +147,7 @@ watch(focusTick, () => nextTick(() => el.value?.focus()));
 			>
 				<FeatherIcon name="paperclip" class="h-3.5 w-3.5" />
 			</button>
-			<input
-				ref="fileInput"
-				type="file"
-				multiple
-				:accept="ACCEPT"
-				class="hidden"
-				@change="onFilesPicked"
-			/>
+			<input ref="fileInput" type="file" multiple :accept="ACCEPT" class="hidden" @change="onFilesPicked" />
 
 			<!-- agent -->
 			<PanelDropdown
@@ -173,9 +164,7 @@ watch(focusTick, () => nextTick(() => el.value?.focus()));
 						:title="__('Agent')"
 						@click="toggle"
 					>
-						<span class="font-medium text-ink-gray-8">{{
-							agentLabel(selectedAgent)
-						}}</span>
+						<span class="font-medium text-ink-gray-8">{{ agentLabel(selectedAgent) }}</span>
 						<FeatherIcon v-if="!locked" name="chevron-down" class="h-3 w-3" />
 					</button>
 				</template>
@@ -213,17 +202,9 @@ watch(focusTick, () => nextTick(() => el.value?.focus()));
 				:title="__('Stop')"
 				@click="stopRun"
 			>
-				<template #icon
-					><span class="h-2.5 w-2.5 rounded-[2px] bg-current"></span
-				></template>
+				<template #icon><span class="h-2.5 w-2.5 rounded-[2px] bg-current"></span></template>
 			</Button>
-			<Button
-				v-else
-				variant="solid"
-				:disabled="!canSend"
-				:title="__('Send')"
-				@click="submit"
-			>
+			<Button v-else variant="solid" :disabled="!canSend" :title="__('Send')" @click="submit">
 				<template #icon><FeatherIcon name="arrow-up" class="h-4 w-4" /></template>
 			</Button>
 		</div>

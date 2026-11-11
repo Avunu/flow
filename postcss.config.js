@@ -23,8 +23,7 @@ export default {
 				// (its data-theme is synced to the desk in main.js).
 				if (/^\[data-theme/.test(selector)) return `${prefix}${selector}`;
 				// Document-level selectors collapse onto the panel root.
-				if (selector === "html" || selector === "body" || selector === ":host")
-					return prefix;
+				if (selector === "html" || selector === "body" || selector === ":host") return prefix;
 				return prefixedSelector;
 			},
 		}),

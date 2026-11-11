@@ -19,9 +19,7 @@ const { recentSessions, switchSession, newChat, fullscreen } = useStore();
 		<SessionsMenu :sessions="recentSessions" @select="switchSession" />
 
 		<Button variant="ghost" :title="__('New chat')" @click="newChat">
-			<template #icon
-				><FeatherIcon name="plus" :stroke-width="2" class="h-3.5 w-3.5"
-			/></template>
+			<template #icon><FeatherIcon name="plus" :stroke-width="2" class="h-3.5 w-3.5" /></template>
 		</Button>
 		<Button
 			variant="ghost"
@@ -29,16 +27,11 @@ const { recentSessions, switchSession, newChat, fullscreen } = useStore();
 			@click="props.onToggleFullscreen && props.onToggleFullscreen()"
 		>
 			<template #icon
-				><FeatherIcon
-					:name="fullscreen ? 'minimize' : 'maximize'"
-					:stroke-width="2"
-					class="h-3.5 w-3.5"
+				><FeatherIcon :name="fullscreen ? 'minimize' : 'maximize'" :stroke-width="2" class="h-3.5 w-3.5"
 			/></template>
 		</Button>
 		<Button variant="ghost" :title="__('Close (Ctrl+I)')" @click="emit('close')">
-			<template #icon
-				><FeatherIcon name="x" :stroke-width="2" class="h-3.5 w-3.5"
-			/></template>
+			<template #icon><FeatherIcon name="x" :stroke-width="2" class="h-3.5 w-3.5" /></template>
 		</Button>
 	</header>
 </template>
