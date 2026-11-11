@@ -93,7 +93,7 @@ show_missing = true
 skip_covered = true
 precision = 1
 exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "@(abc\\.)?abstractmethod"]
-fail_under = 0
+fail_under = 80
 
 [tool.vulture]
 exclude = [".venv/", "node_modules/", ".frappe-nix/", ".dev-dist/", ".devenv/", ".direnv/"]
@@ -142,3 +142,25 @@ reason = "Not yet typed with JSDoc; checkJs reports errors"
 [[tool.frappe-nix.unchecked-js]]
 path = "flow/flow/doctype/flow_session/flow_session.js"
 reason = "Not yet typed with JSDoc; checkJs reports errors"
+
+# Whitelisted methods with no test yet. Writing them is the next PR's work, and the list only shrinks.
+
+[[tool.frappe-nix.untested]]
+target = "flow.api.api.stop_run"
+reason = "Not yet tested; a test is the next PR's work"
+
+[[tool.frappe-nix.untested]]
+target = "flow.api.api.get_agent_tools"
+reason = "Not yet tested; a test is the next PR's work"
+
+[[tool.frappe-nix.untested]]
+target = "flow.flow.doctype.flow_knowledge_source.flow_knowledge_source.FlowKnowledgeSource.reconcile"
+reason = "Not yet tested; a test is the next PR's work"
+
+[[tool.frappe-nix.untested]]
+target = "flow.flow.doctype.flow_model.flow_model.FlowModel.test_connection"
+reason = "Not yet tested; a test is the next PR's work"
+
+[[tool.frappe-nix.untested]]
+target = "flow.flow.doctype.flow_model.flow_model.get_provider_models"
+reason = "Not yet tested; a test is the next PR's work"
