@@ -57,7 +57,7 @@ Flow also ships as a Python framework for building agents in code.
 
 ```python
 import frappe
-from flow import tool
+from flow.lib import tool
 
 @tool
 def get_open_todos(allocated_to: str) -> list[dict]:
@@ -72,7 +72,7 @@ def get_open_todos(allocated_to: str) -> list[dict]:
 ### Run an agent
 
 ```python
-from flow import Agent
+from flow.lib import Agent
 
 agent = Agent(
 	model="anthropic/claude-sonnet-4-6",
