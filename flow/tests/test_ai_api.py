@@ -11,7 +11,15 @@ from frappe.core.doctype.user.user import User
 from frappe.tests import IntegrationTestCase
 from werkzeug.wrappers import Response
 
-from flow.api import attach_file, recover_session, resume_run, start_run, submit_feedback
+from flow.api import (
+	attach_file,
+	get_agent_tools,
+	recover_session,
+	resume_run,
+	start_run,
+	stop_run,
+	submit_feedback,
+)
 from flow.api.api import _parse_attachments
 from flow.flow.doctype.flow_agent.flow_agent import FlowAgent
 from flow.flow.doctype.flow_agent_memory.flow_agent_memory import FlowAgentMemory
@@ -743,6 +751,126 @@ class TestRecoverSession(IntegrationTestCase):
 	def test_blank_session_raises(self):
 		with self.assertRaisesRegex(frappe.ValidationError, "required"):
 			recover_session("  ")
+
+
+class TestStopRun(IntegrationTestCase):
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		sync_builtin_tools()
+
+	def setUp(self):
+		self.model = cast(FlowModel, frappe.get_doc(_model_doc(title="Stop Model"))).insert()
+		self.agent = cast(FlowAgent, frappe.get_doc(_agent_doc(str(self.model.name)))).insert()
+
+	def tearDown(self):
+		frappe.set_user("Administrator")
+		frappe.db.rollback()
+
+	def _paused(self) -> str:
+		with patch.object(Model, "chat", return_value=_confirm_call()):
+			payload = start_run("delete the records", agent=self.agent.name)
+		self.assertEqual(payload["status"], "Paused")
+		return payload["name"]
+
+	def test_paused_run_is_failed_so_the_agent_cannot_continue(self):
+		run_name = self._paused()
+
+		self.assertEqual(stop_run(run_name), {"status": "Failed"})
+		run = cast(FlowRun, frappe.get_doc("Flow Run", run_name))
+		self.assertEqual(run.status, "Failed")
+		self.assertEqual(run.error, "Stopped by user.")
+
+	def test_running_run_is_failed(self):
+		run_name = self._paused()
+		frappe.db.set_value("Flow Run", run_name, "status", "Running")
+
+		self.assertEqual(stop_run(run_name), {"status": "Failed"})
+
+	def test_finished_run_keeps_its_status(self):
+		with patch.object(Model, "chat", return_value=_final()):
+			payload = start_run("hi", agent=self.agent.name)
+
+		self.assertEqual(stop_run(payload["name"]), {"status": "Completed"})
+		self.assertEqual(frappe.db.get_value("Flow Run", payload["name"], "status"), "Completed")
+
+	def test_run_name_is_trimmed(self):
+		run_name = self._paused()
+
+		self.assertEqual(stop_run(f"  {run_name} "), {"status": "Failed"})
+
+	def test_blank_run_is_rejected(self):
+		for blank in ("", "   "):
+			with self.subTest(run_name=blank), self.assertRaisesRegex(frappe.ValidationError, "required"):
+				stop_run(blank)
+
+	def test_unknown_run_raises(self):
+		with self.assertRaises(frappe.DoesNotExistError):
+			stop_run("does-not-exist")
+
+	def test_other_users_run_is_rejected(self):
+		run_name = self._paused()
+
+		frappe.set_user(_ensure_user("stop-other-user@example.com"))
+		with self.assertRaises(frappe.PermissionError):
+			stop_run(run_name)
+
+		frappe.set_user("Administrator")
+		self.assertEqual(frappe.db.get_value("Flow Run", run_name, "status"), "Paused")
+
+
+class TestGetAgentTools(IntegrationTestCase):
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		sync_builtin_tools()
+
+	def setUp(self):
+		self.model = cast(FlowModel, frappe.get_doc(_model_doc(title="Tools Model"))).insert()
+
+	def tearDown(self):
+		frappe.set_user("Administrator")
+		frappe.db.rollback()
+
+	def _agent(self, tools: list[str]) -> FlowAgent:
+		return cast(
+			FlowAgent,
+			frappe.get_doc(
+				_agent_doc(str(self.model.name), tools=[{"tool": tool} for tool in tools])
+			).insert(),
+		)
+
+	def test_maps_each_tool_slug_to_whether_it_needs_confirmation(self):
+		agent = self._agent(["read", "execute"])
+
+		self.assertEqual(get_agent_tools(str(agent.name)), {"read": False, "execute": True})
+
+	def test_agent_without_tools_maps_to_nothing(self):
+		agent = self._agent(["read"])
+		frappe.db.delete("Flow Agent Tool", {"parent": agent.name})
+
+		self.assertEqual(get_agent_tools(str(agent.name)), {})
+
+	def test_agent_name_is_trimmed(self):
+		agent = self._agent(["execute"])
+
+		self.assertEqual(get_agent_tools(f" {agent.name} "), {"execute": True})
+
+	def test_blank_agent_maps_to_nothing(self):
+		for blank in ("", "   "):
+			with self.subTest(agent=blank):
+				self.assertEqual(get_agent_tools(blank), {})
+
+	def test_unknown_agent_raises(self):
+		with self.assertRaises(frappe.DoesNotExistError):
+			get_agent_tools("does-not-exist")
+
+	def test_a_user_who_cannot_read_the_agent_is_rejected(self):
+		agent = self._agent(["read"])
+
+		frappe.set_user("Guest")
+		with self.assertRaises(frappe.PermissionError):
+			get_agent_tools(str(agent.name))
 
 
 class TestSubmitFeedback(IntegrationTestCase):

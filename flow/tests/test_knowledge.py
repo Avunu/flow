@@ -30,6 +30,7 @@ from flow.knowledge.extract import (
 	extract,
 )
 from flow.knowledge.ingest import (
+	enqueue_reconciliation,
 	ingest_source,
 	purge_source,
 	reconcile_source,
@@ -799,6 +800,22 @@ class TestIngest(IntegrationTestCase):
 		with patch("flow.knowledge.ingest.enqueue_ingestion") as mock:
 			source.resync(rebuild=True)
 		mock.assert_called_once_with(source.name, rebuild=True)
+
+	def test_reconcile_enqueues_reconciliation(self):
+		source = self._make_source(content="Reset your password from the account settings page. " * 4)
+		with patch("flow.knowledge.ingest.enqueue_reconciliation") as mock:
+			source.reconcile()
+		mock.assert_called_once_with(source.name)
+
+	def test_enqueue_reconciliation_queues_the_job_after_commit(self):
+		with patch("frappe.enqueue") as enqueue:
+			enqueue_reconciliation("a-source")
+		enqueue.assert_called_once_with(
+			"flow.knowledge.ingest.reconcile_source",
+			queue="long",
+			enqueue_after_commit=True,
+			source="a-source",
+		)
 
 
 class TestDoctypeSync(IntegrationTestCase):

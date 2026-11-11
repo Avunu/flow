@@ -7,7 +7,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from flow.flow.doctype.flow_model.flow_model import FlowModel, _detect_context_window
+from flow.flow.doctype.flow_model.flow_model import FlowModel, _detect_context_window, get_provider_models
 
 
 def _model(**overrides: Any) -> dict:
@@ -193,3 +193,79 @@ class TestContextWindow(IntegrationTestCase):
 			doc.model_id = "anthropic/made-up-model-xyz"
 			doc.save()
 		self.assertEqual(doc.context_window, 128000)
+
+
+class TestTestConnection(IntegrationTestCase):
+	def setUp(self):
+		self.doc = cast(FlowModel, frappe.get_doc(_model(api_key="sk-model-key"))).insert()
+
+	def tearDown(self):
+		frappe.set_user("Administrator")
+		frappe.db.rollback()
+
+	def test_success_sends_a_one_token_ping_with_the_models_own_key(self):
+		with patch("litellm.completion") as completion:
+			result = self.doc.test_connection()
+
+		self.assertTrue(result["ok"])
+		kwargs = completion.call_args.kwargs
+		self.assertEqual(kwargs["model"], "openai/gpt-4o-mini")
+		self.assertEqual(kwargs["api_key"], "sk-model-key")
+		self.assertEqual(kwargs["max_tokens"], 1)
+		self.assertNotIn("api_base", kwargs)
+
+	def test_base_url_is_passed_as_api_base(self):
+		self.doc.base_url = "https://llm.example.com/v1"
+		with patch("litellm.completion") as completion:
+			self.doc.test_connection()
+
+		self.assertEqual(completion.call_args.kwargs["api_base"], "https://llm.example.com/v1")
+
+	def test_falls_back_to_the_providers_credentials(self):
+		keyless = cast(FlowModel, frappe.get_doc(_model(title="Keyless Model"))).insert()
+		creds = {"api_key": "sk-provider-key", "base_url": "https://provider.example.com"}
+		with (
+			patch("flow.lib.model.resolve_provider_credentials", return_value=creds),
+			patch("litellm.completion") as completion,
+		):
+			keyless.test_connection()
+
+		kwargs = completion.call_args.kwargs
+		self.assertEqual(kwargs["api_key"], "sk-provider-key")
+		self.assertEqual(kwargs["api_base"], "https://provider.example.com")
+
+	def test_failure_is_reported_with_the_error_class_as_title(self):
+		with (
+			patch("litellm.completion", side_effect=ConnectionError("no route to host")),
+			self.assertRaisesRegex(frappe.ValidationError, "no route to host"),
+		):
+			self.doc.test_connection()
+
+		self.assertEqual(frappe.message_log[-1]["title"], "ConnectionError")
+
+	def test_requires_write_permission(self):
+		frappe.set_user("Guest")
+		with patch("litellm.completion") as completion, self.assertRaises(frappe.PermissionError):
+			self.doc.test_connection()
+
+		completion.assert_not_called()
+
+
+class TestGetProviderModels(IntegrationTestCase):
+	def test_no_provider_lists_nothing(self):
+		self.assertEqual(get_provider_models(), [])
+		self.assertEqual(get_provider_models(""), [])
+
+	def test_lists_the_providers_models_sorted(self):
+		with patch("litellm.models_by_provider", {"acme": {"acme/b", "acme/a", "acme/c"}}):
+			self.assertEqual(get_provider_models("acme"), ["acme/a", "acme/b", "acme/c"])
+
+	def test_provider_is_matched_case_and_whitespace_insensitively(self):
+		with patch("litellm.models_by_provider", {"acme": {"acme/a"}}):
+			self.assertEqual(get_provider_models("  ACME "), ["acme/a"])
+
+	def test_unknown_provider_lists_nothing(self):
+		self.assertEqual(get_provider_models("not_a_real_provider"), [])
+
+	def test_a_real_provider_is_listed(self):
+		self.assertTrue(get_provider_models("openai"))
