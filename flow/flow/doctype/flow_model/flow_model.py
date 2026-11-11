@@ -9,7 +9,8 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
-MODEL_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_\-]*\/[A-Za-z0-9][A-Za-z0-9_\-:.\/]*$")
+# The model part may start with one `@` for Cloudflare Workers AI ids such as `@cf/zai-org/glm-5.3-flash`.
+MODEL_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_\-]*\/@?[A-Za-z0-9][A-Za-z0-9_\-:.\/]*$")
 
 RESERVED_PARAM_KEYS = frozenset(
 	{"model", "api_key", "api_base", "base_url", "messages", "stream", "tools", "tool_choice"}
@@ -72,7 +73,7 @@ class FlowModel(Document):
 		if not MODEL_ID_PATTERN.match(self.model_id or ""):
 			frappe.throw(
 				_(
-					"Model ID must be in <code>provider/model</code> form (e.g. <code>anthropic/claude-sonnet-4-6</code>). Only lowercase provider names and alphanumerics, dashes, dots, colons or slashes in the model part are allowed."
+					"Model ID must be in <code>provider/model</code> form (e.g. <code>anthropic/claude-sonnet-4-6</code>). Only lowercase provider names and alphanumerics, dashes, dots, colons or slashes in the model part are allowed, with one leading <code>@</code> (e.g. <code>cloudflare/@cf/zai-org/glm-5.3-flash</code>)."
 				),
 				title=_("Invalid Model ID"),
 			)
@@ -104,9 +105,13 @@ class FlowModel(Document):
 			)
 
 	def _resolve_context_window(self):
-		# Always derived from the model — never user input. Keeps the last detected value when
-		# litellm can't resolve the model, and 0 otherwise (callers fall back to a default).
-		self.context_window = _detect_context_window(self.model_id) or self.context_window or 0
+		# A value typed in this save wins. Otherwise detect when the model is new, its id changed or
+		# the window is unknown, keeping the stored value when the model can't be resolved (0 means
+		# unknown: callers fall back to a default). A plain re-save never overwrites an override.
+		if self.context_window and self.has_value_changed("context_window"):
+			return
+		if self.is_new() or self.has_value_changed("model_id") or not self.context_window:
+			self.context_window = _detect_context_window(self.model_id) or self.context_window or 0
 
 	def _validate_provider_known(self):
 		try:

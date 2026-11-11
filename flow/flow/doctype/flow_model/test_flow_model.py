@@ -7,7 +7,12 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from flow.flow.doctype.flow_model.flow_model import FlowModel, _detect_context_window, get_provider_models
+from flow.flow.doctype.flow_model.flow_model import (
+	MODEL_ID_PATTERN,
+	FlowModel,
+	_detect_context_window,
+	get_provider_models,
+)
 
 
 def _model(**overrides: Any) -> dict:
@@ -60,6 +65,29 @@ class TestFlowModelValidation(IntegrationTestCase):
 
 		with self.assertRaises(frappe.ValidationError):
 			doc.insert()
+
+	def test_model_id_pattern_accepts_one_leading_at_sign(self):
+		for good in (
+			"cloudflare/@cf/zai-org/glm-5.3-flash",
+			"cloudflare/@hf/thebloke/mistral-7b-instruct-v0.1-awq",
+			"cloudflare/@cf/baai/bge-m3",
+			"openai/gpt-4.1",
+		):
+			with self.subTest(model_id=good):
+				self.assertTrue(MODEL_ID_PATTERN.match(good))
+
+	def test_model_id_pattern_rejects_other_at_signs(self):
+		for bad in ("cloudflare/@", "cloudflare/", "cloudflare/@@cf/x", "cloudflare/x@cf", "@cf/x", "cloudflare/ @cf/x"):
+			with self.subTest(model_id=bad):
+				self.assertIsNone(MODEL_ID_PATTERN.match(bad))
+
+	def test_cloudflare_model_id_validates_and_saves(self):
+		doc = cast(
+			FlowModel,
+			frappe.get_doc(_model(title="Cloudflare Id", model_id="cloudflare/@cf/zai-org/glm-5.3-flash")),
+		).insert()
+
+		self.assertEqual(doc.model_id, "cloudflare/@cf/zai-org/glm-5.3-flash")
 
 
 class TestFlowModelProvider(IntegrationTestCase):
@@ -193,6 +221,55 @@ class TestContextWindow(IntegrationTestCase):
 			doc.model_id = "anthropic/made-up-model-xyz"
 			doc.save()
 		self.assertEqual(doc.context_window, 128000)
+
+	def test_a_typed_value_is_kept_over_detection(self):
+		with patch("litellm.get_model_info", return_value={"max_input_tokens": 128000}) as info:
+			doc = cast(FlowModel, frappe.get_doc(_model(context_window=1048576))).insert()
+
+		self.assertEqual(doc.context_window, 1048576)
+		info.assert_not_called()
+
+	def test_a_plain_resave_does_not_overwrite_an_override(self):
+		doc = cast(FlowModel, frappe.get_doc(_model(context_window=1048576))).insert()
+		with patch("litellm.get_model_info", return_value={"max_input_tokens": 128000}) as info:
+			doc.title = "Renamed"
+			doc.save()
+
+		info.assert_not_called()
+		self.assertEqual(doc.context_window, 1048576)
+
+	def test_editing_the_value_overrides_the_detected_one(self):
+		with patch("litellm.get_model_info", return_value={"max_input_tokens": 128000}):
+			doc = cast(FlowModel, frappe.get_doc(_model())).insert()
+			doc.context_window = 64000
+			doc.save()
+
+		self.assertEqual(doc.context_window, 64000)
+
+	def test_clearing_the_value_detects_it_again(self):
+		doc = cast(FlowModel, frappe.get_doc(_model(context_window=64000))).insert()
+		with patch("litellm.get_model_info", return_value={"max_input_tokens": 128000}):
+			doc.context_window = 0
+			doc.save()
+
+		self.assertEqual(doc.context_window, 128000)
+
+	def test_a_new_model_id_wins_over_an_untouched_value(self):
+		doc = cast(FlowModel, frappe.get_doc(_model(context_window=64000))).insert()
+		with patch("litellm.get_model_info", return_value={"max_input_tokens": 200000}):
+			doc.model_id = "anthropic/claude-x"
+			doc.save()
+
+		self.assertEqual(doc.context_window, 200000)
+
+	def test_a_new_model_id_and_a_typed_value_keep_the_typed_value(self):
+		doc = cast(FlowModel, frappe.get_doc(_model(context_window=64000))).insert()
+		with patch("litellm.get_model_info", return_value={"max_input_tokens": 200000}):
+			doc.model_id = "anthropic/claude-x"
+			doc.context_window = 32000
+			doc.save()
+
+		self.assertEqual(doc.context_window, 32000)
 
 
 class TestTestConnection(IntegrationTestCase):
