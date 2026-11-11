@@ -114,7 +114,10 @@ def describe(doctype: str, name: str | None = None) -> dict[str, Any]:
 		for f in meta.fields
 		if f.fieldtype not in LAYOUT_FIELDTYPES
 	]
-	permissions = {p: bool(frappe.has_permission(doctype, p)) for p in ("read", "write", "create", "delete")}
+	permissions: dict[str, bool] = {}
+	for ptype in ("read", "write", "create", "delete"):
+		allowed = frappe.has_permission(doctype, ptype)
+		permissions[ptype] = bool(allowed)
 	result: dict[str, Any] = {"doctype": doctype, "fields": fields, "permissions": permissions}
 
 	if name:
@@ -283,6 +286,11 @@ def execute(code: str, description: str) -> Any:
 
 	The user approves each call before it runs.
 	"""
+	# flow.utils.safe_exec: RestrictedPython with an allowlisted namespace whose every data function
+	# enforces the current user's permissions. This tool is declared requires_confirmation, so the
+	# user approves each script before it runs (unless a System Manager set auto_approve on the Flow
+	# Trigger that runs the agent).
+	# nosemgrep: frappe-codeinjection-eval -- permission-gated sandbox, user-approved script
 	exec_globals, _locals = safe_exec(code, script_filename="ai_execute")
 	return exec_globals.get("result")
 

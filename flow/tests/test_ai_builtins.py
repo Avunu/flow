@@ -110,7 +110,7 @@ class TestExecute(IntegrationTestCase):
 		self.assertIsInstance(count, int)
 
 	def test_imports_are_blocked(self):
-		with self.assertRaises(Exception):  # noqa: B017
+		with self.assertRaises(ImportError):
 			execute(code="import os\nresult = os.getcwd()", description="Get working directory")
 
 

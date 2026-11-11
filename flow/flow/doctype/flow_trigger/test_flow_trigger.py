@@ -10,6 +10,7 @@ from frappe.tests import IntegrationTestCase
 from flow import triggers
 from flow.lib.model import ChatResponse, Model
 from flow.tools.builtins import sync_builtin_tools
+from flow.triggers import triggers as triggers_module
 
 
 def _final(text: str = "done") -> ChatResponse:
@@ -287,3 +288,92 @@ class TestFlowTriggerFiring(IntegrationTestCase):
 
 		fired = [c for c in enqueue.call_args_list if c.kwargs.get("trigger") == trig.name]
 		self.assertEqual(len(fired), 0)
+
+
+class TestFlowTriggerIdentity(IntegrationTestCase):
+	"""A trigger runs as its run_as user (else its owner), and the caller's identity comes back."""
+
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		sync_builtin_tools()
+
+	def setUp(self):
+		self.model = frappe.get_doc(_model()).insert()
+		self.agent = frappe.get_doc(_agent(self.model.name)).insert()
+		self.user = (
+			frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": "trigger-run-as@example.com",
+					"first_name": "Run As",
+					"roles": [{"role": "Report Manager"}],
+					"send_welcome_email": 0,
+				}
+			)
+			.insert(ignore_permissions=True)
+			.name
+		)
+		self.todo = frappe.get_doc({"doctype": "ToDo", "description": "identity probe"}).insert()
+
+	def tearDown(self):
+		frappe.set_user("Administrator")
+		frappe.db.rollback()
+
+	def _fire_as_seen_by_the_model(self, trig) -> str:
+		seen: list[str] = []
+
+		def chat(*args, **kwargs):
+			seen.append(frappe.session.user)
+			return _final()
+
+		with patch.object(Model, "chat", side_effect=chat):
+			triggers.fire(trig.name, target_doctype="ToDo", target_name=self.todo.name)
+		return seen[0]
+
+	def test_fire_runs_as_run_as_user(self):
+		trig = frappe.get_doc(_trigger(self.agent.name, run_as=self.user)).insert()
+
+		self.assertEqual(self._fire_as_seen_by_the_model(trig), self.user)
+		self.assertEqual(frappe.session.user, "Administrator")
+
+	def test_fire_falls_back_to_the_trigger_owner(self):
+		trig = frappe.get_doc(_trigger(self.agent.name)).insert()
+		frappe.db.set_value("Flow Trigger", trig.name, "owner", self.user, update_modified=False)
+
+		self.assertEqual(self._fire_as_seen_by_the_model(trig), self.user)
+
+	def test_fire_restores_the_caller_when_the_agent_fails(self):
+		trig = frappe.get_doc(_trigger(self.agent.name, run_as=self.user)).insert()
+
+		with (
+			patch.object(Model, "chat", side_effect=RuntimeError("model down")),
+			self.assertRaisesRegex(RuntimeError, "model down"),
+		):
+			triggers.fire(trig.name, target_doctype="ToDo", target_name=self.todo.name)
+
+		self.assertEqual(frappe.session.user, "Administrator")
+
+	def test_dispatch_evaluates_the_condition_as_run_as_user(self):
+		frappe.get_doc(_trigger(self.agent.name, run_as=self.user, condition="True")).insert()
+		seen: list[str] = []
+
+		def condition(condition, doc):
+			seen.append(frappe.session.user)
+			return True
+
+		with (
+			patch("flow.triggers.triggers._eval_condition", side_effect=condition),
+			patch.object(frappe, "enqueue"),
+		):
+			triggers.dispatch(self.todo, "after_insert")
+
+		self.assertEqual(seen, [self.user])
+		self.assertEqual(frappe.session.user, "Administrator")
+
+	def test_acting_as_restores_the_caller_when_the_block_raises(self):
+		with self.assertRaises(ZeroDivisionError), triggers_module._acting_as(self.user):
+			self.assertEqual(frappe.session.user, self.user)
+			raise ZeroDivisionError
+
+		self.assertEqual(frappe.session.user, "Administrator")

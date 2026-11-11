@@ -81,7 +81,7 @@ def validate_condition(condition: str | None) -> None:
 	try:
 		tree = ast.parse(condition)
 	except SyntaxError as e:
-		frappe.throw(_("Invalid condition: {0}").format(e), title=_("Invalid Condition"))
+		frappe.throw(_("Invalid condition: {0}").format(str(e)), title=_("Invalid Condition"))
 	if not _assigns_result(tree):
 		frappe.throw(
 			_("A multi-line condition must set a <code>result</code> variable."),
@@ -93,5 +93,9 @@ def evaluate_condition(condition: str, context: dict[str, Any]) -> bool:
 	"""Run `condition` in the sandbox with `context` in scope; return the verdict.
 	Raises on execution errors — callers decide how to fail."""
 	script = f"{RESULT_VAR} = ({condition}\n)" if _is_expression(condition) else condition
+	# frappe's RestrictedPython sandbox (no imports, no raw database access). A condition is authored
+	# by a System Manager (Flow Trigger, the only doctype with one, is System Manager only), the
+	# trust level frappe requires for Server Scripts, and `context` holds only values the caller built.
+	# nosemgrep: frappe-codeinjection-eval -- sandboxed, System Manager-authored condition
 	exec_globals, _locals = safe_exec(script, context, script_filename="flow_condition")
 	return bool(exec_globals.get(RESULT_VAR))

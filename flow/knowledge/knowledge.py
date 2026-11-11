@@ -59,6 +59,9 @@ class Knowledge:
 		from flow.knowledge.extract import _extract_by_extension
 
 		extension = os.path.splitext(path)[1].lower().lstrip(".")
+		# A developer API: the path is chosen by the Python caller (console, script), never by a
+		# request. Knowledge is not whitelisted and is not in the `execute` sandbox's namespace.
+		# nosemgrep: frappe-security-file-traversal -- caller-chosen path, see above
 		with open(path, "rb") as handle:
 			text = _extract_by_extension(handle.read(), extension)
 		return self.add_text(text, title=title or os.path.basename(path))

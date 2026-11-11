@@ -180,6 +180,16 @@ class TestResolveTool(IntegrationTestCase):
 		self.assertEqual(runtime.parameters["properties"], {"city": {"type": "string"}})
 		self.assertEqual(runtime(city="Paris"), "sunny in Paris")
 
+	def test_script_tool_rejects_argument_names_that_are_not_identifiers(self):
+		# The model chooses the argument names; they are spliced into the call, so a name that
+		# carries code must be refused before anything runs.
+		doc = frappe.get_doc(_script_doc()).insert()
+		runtime = doc.to_tool()
+
+		for name in ("city=1) or (1", "city; x", "class", "", "a b"):
+			with self.assertRaisesRegex(ValueError, "Invalid argument name"):
+				runtime(**{name: "Paris"})
+
 	def test_script_tool_with_no_args_executes(self):
 		doc = frappe.get_doc(
 			_script_doc(slug="ping", title="Ping", code="def main():\n\treturn 'pong'\n")
