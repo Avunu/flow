@@ -96,7 +96,7 @@ def _build_tool_call(call_id: str, name: str, raw_args: str) -> ToolCall:
 		return ToolCall(id=call_id, name=name, arguments={})
 	try:
 		arguments = json.loads(raw_args)
-	except (TypeError, ValueError):
+	except TypeError, ValueError:
 		return ToolCall(
 			id=call_id,
 			name=name,

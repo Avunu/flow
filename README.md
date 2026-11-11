@@ -59,6 +59,7 @@ Flow also ships as a Python framework for building agents in code.
 import frappe
 from flow.lib import tool
 
+
 @tool
 def get_open_todos(allocated_to: str) -> list[dict]:
 	"""List open ToDo items for a user."""

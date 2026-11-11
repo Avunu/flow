@@ -145,7 +145,7 @@ def _serialize_tool_result(result: Any) -> str:
 		return ""
 	try:
 		return json.dumps(result, default=str)
-	except (TypeError, ValueError):
+	except TypeError, ValueError:
 		return str(result)
 
 

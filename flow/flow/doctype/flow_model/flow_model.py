@@ -92,7 +92,7 @@ class FlowModel(Document):
 			return
 		try:
 			parsed = json.loads(self.params)
-		except (TypeError, ValueError):
+		except TypeError, ValueError:
 			frappe.throw(_("Params must be valid JSON."), title=_("Invalid Params"))
 		if not isinstance(parsed, dict):
 			frappe.throw(_("Params must be a JSON object."), title=_("Invalid Params"))

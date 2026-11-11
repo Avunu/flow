@@ -73,7 +73,7 @@ class FlowRun(Document):
 				continue
 			try:
 				json.loads(value)
-			except (TypeError, ValueError):
+			except TypeError, ValueError:
 				frappe.throw(
 					_("{0} must be valid JSON.").format(fieldname),
 					title=_("Invalid JSON"),
@@ -248,6 +248,6 @@ def _json_has_items(value: Any) -> bool:
 		return False
 	try:
 		parsed = json.loads(value) if isinstance(value, str) else value
-	except (TypeError, ValueError):
+	except TypeError, ValueError:
 		return False
 	return bool(parsed)

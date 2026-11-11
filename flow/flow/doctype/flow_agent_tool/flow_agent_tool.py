@@ -18,4 +18,3 @@ class FlowAgentTool(Document):
 		parenttype: DF.Data
 		tool: DF.Link
 	# end: auto-generated types
-

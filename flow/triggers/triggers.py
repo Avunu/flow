@@ -90,7 +90,7 @@ def dispatch_scheduled() -> None:
 		anchor = frappe.utils.get_datetime(t.last_fired_at or t.creation)
 		try:
 			nxt = croniter(t.cron_expression, anchor).get_next(datetime)
-		except (CroniterBadCronError, ValueError):
+		except CroniterBadCronError, ValueError:
 			frappe.log_error(title=f"Flow Trigger cron parse failed: {t.name}")
 			continue
 		if nxt <= now:

@@ -75,7 +75,7 @@ class FlowProvider(Document):
 			return
 		try:
 			parsed = json.loads(self.extra_params)
-		except (TypeError, ValueError):
+		except TypeError, ValueError:
 			frappe.throw(_("Extra Params must be valid JSON."), title=_("Invalid Params"))
 		if not isinstance(parsed, dict):
 			frappe.throw(_("Extra Params must be a JSON object."), title=_("Invalid Params"))

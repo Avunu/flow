@@ -332,12 +332,10 @@ def _apply_action(doctype: str, name: str, action: str, args: dict[str, Any]) ->
 
 @tool(
 	requires_confirmation=True,
-	confirm_prompt=lambda args: (
-		_("Create {0} {1} record(s):\n\n{2}").format(
-			len(args.get("records") or []),
-			args.get("doctype", "?"),
-			_summarize_values((args.get("records") or [{}])[0]),
-		)
+	confirm_prompt=lambda args: _("Create {0} {1} record(s):\n\n{2}").format(
+		len(args.get("records") or []),
+		args.get("doctype", "?"),
+		_summarize_values((args.get("records") or [{}])[0]),
 	),
 )
 def create(doctype: str, records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -364,13 +362,11 @@ def create(doctype: str, records: list[dict[str, Any]]) -> dict[str, Any]:
 
 @tool(
 	requires_confirmation=True,
-	confirm_prompt=lambda args: (
-		_("Update {0} {1} ({2}):\n\n{3}").format(
-			len(args.get("names") or []),
-			args.get("doctype", "?"),
-			_summarize_names(args.get("names")),
-			_summarize_values(args.get("values")),
-		)
+	confirm_prompt=lambda args: _("Update {0} {1} ({2}):\n\n{3}").format(
+		len(args.get("names") or []),
+		args.get("doctype", "?"),
+		_summarize_names(args.get("names")),
+		_summarize_values(args.get("values")),
 	),
 )
 def update(doctype: str, names: list[str], values: dict[str, Any]) -> dict[str, Any]:
@@ -396,12 +392,10 @@ def update(doctype: str, names: list[str], values: dict[str, Any]) -> dict[str, 
 
 @tool(
 	requires_confirmation=True,
-	confirm_prompt=lambda args: (
-		_("Delete {0} {1}: {2}").format(
-			len(args.get("names") or []),
-			args.get("doctype", "?"),
-			_summarize_names(args.get("names")),
-		)
+	confirm_prompt=lambda args: _("Delete {0} {1}: {2}").format(
+		len(args.get("names") or []),
+		args.get("doctype", "?"),
+		_summarize_names(args.get("names")),
 	),
 )
 def delete(doctype: str, names: list[str]) -> dict[str, Any]:
@@ -425,13 +419,11 @@ def delete(doctype: str, names: list[str]) -> dict[str, Any]:
 
 @tool(
 	requires_confirmation=True,
-	confirm_prompt=lambda args: (
-		_("Run '{0}' on {1} {2}: {3}").format(
-			args.get("action"),
-			len(args.get("names") or []),
-			args.get("doctype", "?"),
-			_summarize_names(args.get("names")),
-		)
+	confirm_prompt=lambda args: _("Run '{0}' on {1} {2}: {3}").format(
+		args.get("action"),
+		len(args.get("names") or []),
+		args.get("doctype", "?"),
+		_summarize_names(args.get("names")),
 	),
 )
 def run_action(

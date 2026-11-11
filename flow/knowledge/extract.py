@@ -315,7 +315,7 @@ def _parse_filters(raw) -> dict:
 
 	try:
 		parsed = json.loads(raw)
-	except (TypeError, ValueError):
+	except TypeError, ValueError:
 		frappe.throw(_("Filters must be valid JSON."), title=_("Invalid Filters"))
 	if not isinstance(parsed, dict):
 		frappe.throw(_("Filters must be a JSON object."), title=_("Invalid Filters"))

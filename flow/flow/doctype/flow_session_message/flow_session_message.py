@@ -22,4 +22,3 @@ class FlowSessionMessage(Document):
 		tool_call_id: DF.Data | None
 		tool_calls: DF.JSON | None
 	# end: auto-generated types
-

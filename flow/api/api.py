@@ -84,7 +84,7 @@ def _parse_attachments(value: Any) -> list[str]:
 	if isinstance(value, str):
 		try:
 			value = json.loads(value)
-		except (TypeError, ValueError):
+		except TypeError, ValueError:
 			frappe.throw(_("Attachments must be a JSON array of file ids."), title=_("Invalid Attachments"))
 	if not isinstance(value, list):
 		frappe.throw(_("Attachments must be a list of file ids."), title=_("Invalid Attachments"))
@@ -139,7 +139,7 @@ def _parse_answers(answers: Any) -> dict[str, Any]:
 	if isinstance(answers, str):
 		try:
 			answers = json.loads(answers)
-		except (TypeError, ValueError):
+		except TypeError, ValueError:
 			frappe.throw(_("Answers must be a JSON object."), title=_("Invalid Answers"))
 	if not isinstance(answers, dict):
 		frappe.throw(_("Answers must be a JSON object."), title=_("Invalid Answers"))

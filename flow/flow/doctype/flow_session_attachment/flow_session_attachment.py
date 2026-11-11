@@ -39,7 +39,6 @@ class FlowSessionAttachment(Document):
 	# end: auto-generated types
 
 
-
 def extract_attachment(file: str) -> dict[str, Any]:
 	"""Validate and extract text from an uploaded File. Raises (so errors surface at
 	upload time) if the caller doesn't own the file, the type is unsupported, or no
