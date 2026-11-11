@@ -278,6 +278,21 @@ def _sync_doctype(doc, settings) -> None:
 	doc.db_set("last_synced_at", sweep_start, update_modified=False)
 
 
+def _commit_source_status() -> None:
+	"""Commit a source's status row from inside the ingestion worker.
+
+	The worker needs this at two points. When it marks the source Processing, the status is
+	visible while the (long) ingestion runs and the row lock is released instead of blocking
+	edits to the source until the job ends; everything after that commit is the ingestion's
+	own work, which the failure path can roll back on its own. When it marks the source
+	Failed, the exception ingest_source re-raises makes the job runner roll back the
+	transaction, and the failure would be lost.
+
+	A successful run needs no commit: the job runner commits when the job returns.
+	"""
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit -- worker status boundary, see the docstring
+
+
 def _mark_failed(source: str) -> None:
 	error = frappe.get_traceback(with_context=True)
 	frappe.db.set_value(
@@ -286,7 +301,7 @@ def _mark_failed(source: str) -> None:
 		{"status": "Failed", "error_log": error},
 		update_modified=False,
 	)
-	frappe.db.commit()
+	_commit_source_status()
 
 
 def ingest_source(source: str, rebuild: bool = False) -> None:
@@ -294,10 +309,13 @@ def ingest_source(source: str, rebuild: bool = False) -> None:
 
 	rebuild forces a full re-chunk of a DocType source (purge + reset watermark) so
 	new chunk settings apply to rows whose content is otherwise unchanged. Single-doc
-	sources rebuild on every run regardless."""
+	sources rebuild on every run regardless.
+
+	The job runner commits a successful run; a direct caller commits (or rolls back) its own
+	transaction."""
 	doc = frappe.get_doc("Flow Knowledge Source", source)
 	doc.db_set("status", "Processing", update_modified=False)
-	frappe.db.commit()
+	_commit_source_status()
 
 	try:
 		settings = frappe.get_cached_doc("Flow Knowledge Settings")
@@ -318,7 +336,6 @@ def ingest_source(source: str, rebuild: bool = False) -> None:
 		{"status": "Completed", "chunk_count": count, "error_log": None},
 		update_modified=False,
 	)
-	frappe.db.commit()
 
 
 def _existing_names(doctype: str, names: set[str]) -> set[str]:

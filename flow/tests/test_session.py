@@ -2,6 +2,8 @@
 # License: MIT. See LICENSE
 
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 from unittest.mock import patch
 
@@ -139,3 +141,82 @@ class TestSessionModelOverride(IntegrationTestCase):
 		with patch.object(Model, "chat", return_value=_final()):
 			second = switched.chat("again")
 		self.assertEqual(json.loads(second.config_snapshot)["model"], self.model_b.name)
+
+
+class TestChatCommitBoundaries(IntegrationTestCase):
+	"""chat() commits the Running run before the model call and the Failed run before re-raising.
+
+	Tests run in a transaction their tearDown rolls back, so the commit is skipped under
+	frappe.flags.in_test; these tests lift that and watch the commit instead of performing it."""
+
+	def setUp(self):
+		sync_builtin_tools()
+		model = frappe.get_doc(
+			{"doctype": "Flow Model", "title": "Commit Model", "model_id": "openai/gpt-4o-mini", "enabled": 1}
+		).insert()
+		self.agent_doc = frappe.get_doc(
+			{
+				"doctype": "Flow Agent",
+				"title": "Commit Agent",
+				"model": model.name,
+				"instructions": "x",
+				"enabled": 1,
+			}
+		).insert()
+		self.session = new_session(self.agent_doc)
+		self.events: list[tuple[str, str | None]] = []
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	@contextmanager
+	def _outside_tests(self) -> Iterator[None]:
+		frappe.flags.in_test = False
+		try:
+			yield
+		finally:
+			frappe.flags.in_test = True
+
+	def _run_status(self) -> str | None:
+		return frappe.db.get_value("Flow Run", {"session": self.session.name}, "status")
+
+	def _record_commit(self):
+		self.events.append(("commit", self._run_status()))
+
+	def _model_chat(self, *args, **kwargs):
+		self.events.append(("model", self._run_status()))
+		return _final()
+
+	def test_running_run_is_committed_before_the_model_call(self):
+		with (
+			self._outside_tests(),
+			patch.object(frappe.db, "commit", side_effect=self._record_commit),
+			patch.object(Model, "chat", side_effect=self._model_chat),
+		):
+			self.session.chat("hello")
+
+		self.assertEqual(self.events, [("commit", "Running"), ("model", "Running")])
+
+	def test_failed_run_is_committed_before_the_error_propagates(self):
+		def boom(*args, **kwargs):
+			self.events.append(("model", self._run_status()))
+			raise RuntimeError("model down")
+
+		with (
+			self._outside_tests(),
+			patch.object(frappe.db, "commit", side_effect=self._record_commit),
+			patch.object(Model, "chat", side_effect=boom),
+			self.assertRaisesRegex(RuntimeError, "model down"),
+		):
+			self.session.chat("hello")
+
+		self.assertEqual(self.events, [("commit", "Running"), ("model", "Running"), ("commit", "Failed")])
+
+	def test_tests_never_commit(self):
+		with (
+			patch.object(frappe.db, "commit") as commit,
+			patch.object(Model, "chat", return_value=_final()),
+		):
+			self.session.chat("hello")
+
+		commit.assert_not_called()

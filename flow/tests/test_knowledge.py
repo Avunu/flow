@@ -675,6 +675,48 @@ class TestIngest(IntegrationTestCase):
 		self.assertEqual(source.status, "Failed")
 		self.assertIn("non-public", source.error_log or "")
 
+	def _ingest_recording(self, source_name):
+		"""Run ingest_source, recording (event, source status) at each commit and rollback."""
+		events = []
+
+		def record(event):
+			def side_effect(*args, **kwargs):
+				events.append((event, frappe.db.get_value("Flow Knowledge Source", source_name, "status")))
+
+			return side_effect
+
+		def fake(input, **kwargs):
+			return _embedding_response([[0.1, 0.2, 0.3, 0.4]] * len(input))
+
+		try:
+			with (
+				patch("litellm.embedding", side_effect=fake),
+				patch.object(frappe.db, "commit", side_effect=record("commit")),
+				patch.object(frappe.db, "rollback", side_effect=record("rollback")),
+			):
+				ingest_source(source_name)
+		finally:
+			self.events = events
+
+	def test_success_commits_only_the_processing_status(self):
+		# The job runner commits a successful run, so ingest_source adds no commit of its own.
+		source = self._make_source(content="Reset your password from the account settings page. " * 4)
+		self._ingest_recording(source.name)
+
+		self.assertEqual(self.events, [("commit", "Processing")])
+		source.reload()
+		self.assertEqual(source.status, "Completed")
+
+	def test_failure_rolls_back_then_commits_the_failed_status(self):
+		# The re-raised exception makes the job runner roll back, so Failed is committed first.
+		source = self._make_source(source_type="URL", url="http://127.0.0.1/secret")
+		with self.assertRaises(frappe.ValidationError):
+			self._ingest_recording(source.name)
+
+		self.assertEqual(
+			self.events, [("commit", "Processing"), ("rollback", "Processing"), ("commit", "Failed")]
+		)
+
 	def test_purge_source_is_safe_when_empty(self):
 		source = self._make_source(content="never ingested")
 		purge_source(source.name)

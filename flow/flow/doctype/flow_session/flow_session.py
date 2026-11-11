@@ -39,6 +39,24 @@ def _set_active_run(run: str | None) -> None:
 	frappe.flags.flow_run = run
 
 
+def _commit_run_state() -> None:
+	"""Commit the transaction so the Flow Run row's current state outlives what follows.
+
+	chat() needs this at two points, in a request or in a trigger's background job alike.
+	Before the model call, the Running run becomes visible to stop_run / recover_session (and
+	a crash leaves a row to recover) and the Flow Session row locks are released for the
+	length of the call, rather than held until the end-of-request or end-of-job commit. After
+	a failed run is marked Failed, the exception chat() re-raises would otherwise make the
+	request or job rollback discard that write.
+
+	Skipped in tests, which run in a transaction their tearDown rolls back.
+	"""
+	if frappe.flags.in_test:
+		return
+	# nosemgrep: frappe-manual-commit -- one of the two durability points in the docstring above
+	frappe.db.commit()
+
+
 class FlowSession(Document):
 	# begin: auto-generated types
 	# This code is auto-generated. Do not modify anything in this block.
@@ -167,8 +185,7 @@ class FlowSession(Document):
 
 		# Release row locks and publish the Running run before the long model call, so a
 		# concurrent turn doesn't block on the Flow Session row until lock timeout (1205).
-		if not frappe.flags.in_test:
-			frappe.db.commit()
+		_commit_run_state()
 
 		# Opt-in (set on the Flow Trigger): run confirmation tools without approval so unattended
 		# trigger runs don't park in Paused waiting for a confirmation no one can give.
@@ -185,8 +202,7 @@ class FlowSession(Document):
 		except Exception as e:
 			run.mark_failed(str(e))
 			# Persist Failed too; the Running run is already committed.
-			if not frappe.flags.in_test:
-				frappe.db.commit()
+			_commit_run_state()
 			raise
 		finally:
 			_set_active_run(None)
@@ -411,7 +427,7 @@ def _delete_attachment_files(sessions: list[str]) -> None:
 	so File.on_trash runs to remove the on-disk content, and best-effort so one failure
 	never aborts the purge."""
 	files = frappe.get_all("Flow Session Attachment", filters={"parent": ["in", sessions]}, pluck="file")
-	for file in set(filter(None, files)):
+	for file in {file for file in files if file}:
 		try:
 			frappe.delete_doc("File", file, ignore_permissions=True, force=True, delete_permanently=True)
 		except Exception:
@@ -461,7 +477,7 @@ def _inject_inline_files(content: str | None, attachments: list[Any], budget: in
 	for a in attachments:
 		text, truncated = _clamp(a.extracted_text or "", budget)
 		budget -= len(text)
-		marker = _("\n\n[File truncated to fit the context window.]") if truncated else ""
+		marker = "\n\n" + _("[File truncated to fit the context window.]") if truncated else ""
 		blocks.append(f"--- File: {a.file_name} ---\n{text}{marker}\n--- End of file: {a.file_name} ---")
 	body = f"{_('The user attached the following file(s):')}\n\n" + "\n\n".join(blocks)
 	return (f"{content}\n\n{body}" if content else body), budget
