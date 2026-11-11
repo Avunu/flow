@@ -19,4 +19,3 @@ class FlowAgentKnowledgeBase(Document):
 		parenttype: DF.Data
 	# end: auto-generated types
 
-	pass

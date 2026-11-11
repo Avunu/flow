@@ -38,7 +38,6 @@ class FlowSessionAttachment(Document):
 		run: DF.Link | None
 	# end: auto-generated types
 
-	pass
 
 
 def extract_attachment(file: str) -> dict[str, Any]:

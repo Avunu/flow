@@ -19,4 +19,3 @@ class FlowAgentTool(Document):
 		tool: DF.Link
 	# end: auto-generated types
 
-	pass

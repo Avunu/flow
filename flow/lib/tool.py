@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import inspect
 import types
-import typing
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -130,11 +129,11 @@ def _type_to_schema(t: Any) -> dict[str, Any]:
 	origin = get_origin(t)
 	args = get_args(t)
 
-	if origin in (list, tuple, set, frozenset, typing.List, typing.Tuple, typing.Set, typing.FrozenSet):
+	if origin in (list, tuple, set, frozenset):
 		items_schema = _type_to_schema(args[0]) if args else {}
 		return {"type": "array", "items": items_schema}
 
-	if origin in (dict, typing.Dict):
+	if origin is dict:
 		return {"type": "object"}
 
 	if origin is Literal:

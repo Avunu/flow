@@ -22,4 +22,3 @@ class FlowKnowledgeChunk(Document):
 		source: DF.Link
 	# end: auto-generated types
 
-	pass

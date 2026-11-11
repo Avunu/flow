@@ -23,4 +23,3 @@ class FlowSessionMessage(Document):
 		tool_calls: DF.JSON | None
 	# end: auto-generated types
 
-	pass

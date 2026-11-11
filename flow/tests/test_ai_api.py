@@ -842,7 +842,6 @@ class TestMemoryRunProvenance(IntegrationTestCase):
 		def boom(self, messages, tools=None, *, stream=False):
 			raise RuntimeError("kaboom")
 
-		with patch.object(Model, "chat", new=boom):
-			with self.assertRaises(RuntimeError):
-				start_run("go", agent=self.agent.name)
+		with patch.object(Model, "chat", new=boom), self.assertRaises(RuntimeError):
+			start_run("go", agent=self.agent.name)
 		self.assertIsNone(frappe.flags.get("flow_run"))
