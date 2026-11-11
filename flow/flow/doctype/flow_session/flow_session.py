@@ -119,7 +119,7 @@ class FlowSession(Document):
 		Age is last activity (modified), so an actively-used session is never purged."""
 		cutoff = frappe.utils.add_days(frappe.utils.now(), -days)
 		sessions = frappe.get_all("Flow Session", filters={"modified": ["<", cutoff]}, pluck="name")
-		for batch in map(list, batched(sessions, 100, strict=False)):
+		for batch in (list(chunk) for chunk in batched(sessions, 100, strict=False)):
 			frappe.db.delete("Flow Run", {"session": ["in", batch]})
 			frappe.db.delete("Flow Session Message", {"parent": ["in", batch]})
 			_delete_attachment_files(batch)
