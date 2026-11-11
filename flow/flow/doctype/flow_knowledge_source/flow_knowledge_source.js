@@ -1,6 +1,12 @@
 // Copyright (c) 2026, Frappe Technologies and contributors
 // License: MIT. See LICENSE
 
+/** @typedef {frappe.ui.form.Form<"Flow Knowledge Source">} SourceForm */
+
+// The chunk settings each open form was last saved with, to tell on save whether they changed.
+/** @type {WeakMap<SourceForm, { chunk_size: number | null | undefined, chunk_overlap: number | null | undefined }>} */
+const chunking_baselines = new WeakMap();
+
 frappe.ui.form.on("Flow Knowledge Source", {
 	refresh(frm) {
 		apply_file_restrictions(frm);
@@ -9,10 +15,10 @@ frappe.ui.form.on("Flow Knowledge Source", {
 			return;
 		}
 
-		frm.__chunking_baseline = {
+		chunking_baselines.set(frm, {
 			chunk_size: frm.doc.chunk_size,
 			chunk_overlap: frm.doc.chunk_overlap,
-		};
+		});
 
 		frm.add_custom_button(__("Resync"), async () => {
 			await frm.call("resync", { rebuild: 0 });
@@ -29,7 +35,7 @@ frappe.ui.form.on("Flow Knowledge Source", {
 	},
 
 	after_save(frm) {
-		const baseline = frm.__chunking_baseline;
+		const baseline = chunking_baselines.get(frm);
 		if (!baseline || !frm.doc.chunk_count) {
 			return;
 		}
@@ -38,10 +44,10 @@ frappe.ui.form.on("Flow Knowledge Source", {
 		if (!changed) {
 			return;
 		}
-		frm.__chunking_baseline = {
+		chunking_baselines.set(frm, {
 			chunk_size: frm.doc.chunk_size,
 			chunk_overlap: frm.doc.chunk_overlap,
-		};
+		});
 		frappe.confirm(
 			__(
 				"Chunk settings changed. The {0} existing chunks for this source will be deleted and rebuilt with the new settings. Re-process now?",
@@ -63,12 +69,17 @@ frappe.ui.form.on("Flow Knowledge Source", {
 
 // Cap the File picker to the formats the ingest pipeline can actually extract.
 // Types come from frappe.boot
+/** @param {SourceForm} frm */
 function apply_file_restrictions(frm) {
 	if (frm.doc.source_type !== "File") {
 		return;
 	}
 	const types = (frappe.boot.flow_supported_file_types || []).map((ext) => `.${ext}`);
-	frm.fields_dict.file.df.options = {
+	const field = frm.fields_dict.file;
+	if (!field) {
+		return;
+	}
+	field.df.options = {
 		restrictions: { allowed_file_types: types },
 	};
 }

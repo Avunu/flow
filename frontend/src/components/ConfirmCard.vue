@@ -5,13 +5,16 @@ import ArgsView from "./ArgsView.vue";
 import { confirmTitle, hasArgs, parseArgs, blockKeysFor } from "@/lib/toolMeta";
 import { __ } from "@/lib/translate";
 
+/** @import { PropType } from "vue" */
+/** @import { Question, ToolPart } from "@/lib/types" */
+
 const props = defineProps({
-	question: { type: Object, required: true },
-	tool: { type: Object, default: null },
+	question: { type: /** @type {PropType<Question>} */ (Object), required: true },
+	tool: { type: /** @type {PropType<ToolPart | null>} */ (Object), default: null },
 });
 const emit = defineEmits(["answer"]);
 
-const otherEl = ref(null);
+const otherEl = ref(/** @type {HTMLTextAreaElement | null} */ (null));
 
 // Tool confirmation: name the specific action; free-text ask: show the prompt.
 const confirm = computed(() => (props.tool ? confirmTitle(props.tool.name, props.tool.arguments) : null));
@@ -34,12 +37,14 @@ const answered = computed(() => props.question._answer !== undefined);
 
 // Options are stable tokens ("Approve"/"Deny"); translate only for display.
 // LLM-authored options pass through as-is.
+/** @param {string} opt */
 function optLabel(opt) {
 	if (opt === "Approve") return __("Approve");
 	if (opt === "Deny") return __("Deny");
 	return opt;
 }
 
+/** @param {string} option */
 function pick(option) {
 	emit("answer", option);
 }
@@ -80,7 +85,7 @@ function sendOther() {
 
 		<div v-if="answered" class="mt-2 flex items-center justify-end gap-1.5 text-xs text-ink-gray-6">
 			<FeatherIcon name="check" class="h-3 w-3" />
-			<span class="truncate">{{ optLabel(question._answer) }}</span>
+			<span class="truncate">{{ optLabel(question._answer ?? "") }}</span>
 		</div>
 
 		<template v-else>

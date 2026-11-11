@@ -151,14 +151,12 @@
 		{
 			"files": ["frontend/src/main.js"],
 			"rules": {
-				"import/no-unassigned-import": "off",
-				"eslint/no-unused-expressions": "off"
+				"import/no-unassigned-import": "off"
 			}
 		},
 		{
 			"files": ["frontend/src/store.js"],
 			"rules": {
-				"eslint/no-shadow": "off",
 				"unicorn/no-array-reverse": "off",
 				"oxc/no-map-spread": "off"
 			}
@@ -173,6 +171,12 @@
 			"files": ["frontend/src/api/stream.js"],
 			"rules": {
 				"eslint/no-await-in-loop": "off"
+			}
+		},
+		{
+			"files": ["types/**"],
+			"rules": {
+				"import/no-unassigned-import": "off"
 			}
 		}
 	]

@@ -7,12 +7,26 @@ import FeedbackBar from "./FeedbackBar.vue";
 import WorkingIndicator from "./WorkingIndicator.vue";
 import { useStore } from "@/store";
 
-const props = defineProps({ message: { type: Object, required: true } });
+/** @import { PropType } from "vue" */
+/** @import { AssistantMsg, Question, TextPart, ToolPart } from "@/lib/types" */
+
+/**
+ * One rendered block of the message.
+ * @typedef {{ kind: "text", id: string, part: TextPart }
+ *   | { kind: "confirm", id: string, question: Question, part: ToolPart }
+ *   | { kind: "approval", id: string, parts: ToolPart[] }
+ *   | { kind: "activity", id: string, parts: ToolPart[] }} Item
+ */
+
+const props = defineProps({
+	message: { type: /** @type {PropType<AssistantMsg>} */ (Object), required: true },
+});
 const { answerQuestion, toolApproval } = useStore();
 
 const questionByKey = computed(() => new Map(props.message.questions.map((q) => [q.key, q])));
 
 // A confirmation tool (per the agent's tool map), or one that has/had a question.
+/** @param {ToolPart} part */
 function isApproval(part) {
 	const q = questionByKey.value.get(part.id);
 	return toolApproval.value[part.name] === true || q !== undefined || part.approval !== null;
@@ -21,6 +35,7 @@ function isApproval(part) {
 // Group parts for render: text → prose, approval tool → own line (card if pending),
 // other tools → merged activity group. Rendering-only.
 const items = computed(() => {
+	/** @type {Item[]} */
 	const out = [];
 	for (const part of props.message.parts) {
 		if (part.type !== "tool") {

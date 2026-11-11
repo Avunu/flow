@@ -11,8 +11,9 @@ const props = defineProps({
 });
 const { loadInitial, scrollTick } = useStore();
 
-const panel = ref(null);
-const composer = ref(null);
+const panel = ref(/** @type {HTMLElement | null} */ (null));
+const composer = ref(/** @type {{ $el: HTMLElement } | null} */ (null));
+/** @type {ResizeObserver | null} */
 let observer = null;
 
 // The composer floats over the message list, so the list pads its bottom by the
@@ -21,10 +22,11 @@ let observer = null;
 onMounted(() => {
 	loadInitial();
 	observer = new ResizeObserver(([entry]) => {
-		panel.value?.style.setProperty("--flow-composer-h", `${entry.target.offsetHeight}px`);
+		const composerEl = /** @type {HTMLElement} */ (entry.target);
+		panel.value?.style.setProperty("--flow-composer-h", `${composerEl.offsetHeight}px`);
 		scrollTick.value++;
 	});
-	observer.observe(composer.value.$el);
+	if (composer.value) observer.observe(composer.value.$el);
 });
 onUnmounted(() => observer?.disconnect());
 </script>

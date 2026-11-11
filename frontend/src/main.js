@@ -14,6 +14,14 @@ const MIN_WIDTH = 360;
 // frappe-ui components) mounts inside #flow-root; all bundle CSS is scoped to
 // that id so nothing leaks onto the desk.
 class FlowPanel {
+	store = useStore();
+	root = document.createElement("div");
+	app = createApp(App, {
+		onClose: () => this.hide(),
+		onToggleFullscreen: () => this.toggleFullscreen(),
+	});
+	_savedTransition = "";
+
 	constructor() {
 		const saved = readPanelState();
 		this.visible = Boolean(saved.open);
@@ -33,10 +41,8 @@ class FlowPanel {
 	}
 
 	_mount() {
-		this.store = useStore();
 		this.store.fullscreen.value = this._initialFullscreen;
 
-		this.root = document.createElement("div");
 		this.root.id = "flow-root";
 		Object.assign(this.root.style, {
 			position: "fixed",
@@ -52,10 +58,6 @@ class FlowPanel {
 		});
 		document.body.appendChild(this.root);
 
-		this.app = createApp(App, {
-			onClose: () => this.hide(),
-			onToggleFullscreen: () => this.toggleFullscreen(),
-		});
 		this.app.mount(this.root);
 
 		this._addResizeHandle();
@@ -77,6 +79,7 @@ class FlowPanel {
 		});
 		this.root.appendChild(handle);
 
+		/** @param {MouseEvent} e */
 		const onMove = (e) => {
 			const max = window.innerWidth - 80;
 			const width = Math.min(max, Math.max(MIN_WIDTH, window.innerWidth - e.clientX));
@@ -140,7 +143,8 @@ class FlowPanel {
 	}
 
 	toggle() {
-		this.visible ? this.hide() : this.show();
+		if (this.visible) this.hide();
+		else this.show();
 	}
 
 	// Expand to the full viewport width, or restore the half-screen width. State

@@ -9,7 +9,7 @@ import { __ } from "@/lib/translate";
 
 const { messages, needsSetup, agents, models, scrollTick, forceScroll } = useStore();
 
-const el = ref(null);
+const el = ref(/** @type {HTMLElement | null} */ (null));
 let frame = 0;
 let stick = true; // follow new content unless the user scrolled up
 

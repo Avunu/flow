@@ -5,7 +5,7 @@ import { __ } from "@/lib/translate";
 // Long text clamped to a few lines with a Show more/less toggle when it overflows.
 const props = defineProps({ text: { type: String, default: "" } });
 
-const body = ref(null);
+const body = ref(/** @type {HTMLElement | null} */ (null));
 const expanded = ref(false);
 const overflowing = ref(false);
 

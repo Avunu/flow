@@ -31,12 +31,12 @@ const {
 
 // Backend (flow/boot.py) is the single source of truth for supported file types.
 const ACCEPT = computed(() =>
-	(frappe.boot.flow_supported_file_types || []).map((ext) => `.${ext}`).join(","),
+	(frappe.boot.flow_supported_file_types || []).map((/** @type {string} */ ext) => `.${ext}`).join(","),
 );
 
 const text = ref("");
-const el = ref(null);
-const fileInput = ref(null);
+const el = ref(/** @type {HTMLTextAreaElement | null} */ (null));
+const fileInput = ref(/** @type {HTMLInputElement | null} */ (null));
 const dragging = ref(false);
 
 const inputDisabled = computed(() => !loaded.value || sending.value || paused.value || needsSetup.value);
@@ -65,29 +65,35 @@ function pickFiles() {
 	fileInput.value?.click();
 }
 
+/** @param {Event} e */
 function onFilesPicked(e) {
-	attachFiles(e.target.files);
-	e.target.value = ""; // allow re-picking the same file
+	const input = /** @type {HTMLInputElement} */ (e.target);
+	attachFiles(input.files);
+	input.value = ""; // allow re-picking the same file
 }
 
+/** @param {DragEvent} e */
 function onDragOver(e) {
 	if (inputDisabled.value) return;
 	e.preventDefault();
 	dragging.value = true;
 }
 
+/** @param {DragEvent} e */
 function onDragLeave(e) {
-	if (e.currentTarget.contains(e.relatedTarget)) return;
+	if (/** @type {Element} */ (e.currentTarget).contains(/** @type {Node | null} */ (e.relatedTarget))) return;
 	dragging.value = false;
 }
 
+/** @param {DragEvent} e */
 function onDrop(e) {
 	e.preventDefault();
 	dragging.value = false;
 	if (inputDisabled.value) return;
-	attachFiles(e.dataTransfer.files);
+	attachFiles(e.dataTransfer?.files ?? null);
 }
 
+/** @param {KeyboardEvent} e */
 function onKeydown(e) {
 	if (e.key === "Enter" && !e.shiftKey) {
 		e.preventDefault();

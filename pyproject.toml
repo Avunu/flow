@@ -105,15 +105,17 @@ whitelist = ["frappe.*"]
 [tool.frappe-nix.js.oxfmt]
 ignore = ["**/*.html"]
 
-# Findings in the existing Vue panel that have no safe autofix. Each is a small rewrite
-# (or a deliberate choice) left for a later change, so the rules are off for just that file.
+# Findings in the Vue panel that stay on purpose, so the rule is off for just that file: main.js
+# imports its stylesheet for the side effect; store.js copies before it reverses and spreads into a
+# fresh record per question; MarkdownText.vue copies a live node list before it removes from it;
+# stream.js reads the response one chunk at a time.
 [[tool.frappe-nix.js.oxlint.overrides]]
 files = ["frontend/src/main.js"]
-rules = { "import/no-unassigned-import" = "off", "eslint/no-unused-expressions" = "off" }
+rules = { "import/no-unassigned-import" = "off" }
 
 [[tool.frappe-nix.js.oxlint.overrides]]
 files = ["frontend/src/store.js"]
-rules = { "eslint/no-shadow" = "off", "unicorn/no-array-reverse" = "off", "oxc/no-map-spread" = "off" }
+rules = { "unicorn/no-array-reverse" = "off", "oxc/no-map-spread" = "off" }
 
 [[tool.frappe-nix.js.oxlint.overrides]]
 files = ["frontend/src/components/MarkdownText.vue"]
@@ -123,24 +125,18 @@ rules = { "unicorn/no-useless-spread" = "off" }
 files = ["frontend/src/api/stream.js"]
 rules = { "eslint/no-await-in-loop" = "off" }
 
-# Desk scripts that strict checkJs reports on today. Typing them (JSDoc) is the next PR's work, and
-# the list only shrinks from here.
+# A declaration file that augments a module has to be a module itself, and the bare import is what
+# makes it one.
+[[tool.frappe-nix.js.oxlint.overrides]]
+files = ["types/**"]
+rules = { "import/no-unassigned-import" = "off" }
 
-[[tool.frappe-nix.unchecked-js]]
-path = "flow/flow/doctype/flow_knowledge_source/flow_knowledge_source.js"
-reason = "Not yet typed with JSDoc; checkJs reports errors"
-
-[[tool.frappe-nix.unchecked-js]]
-path = "flow/flow/doctype/flow_model/flow_model.js"
-reason = "Not yet typed with JSDoc; checkJs reports errors"
-
-[[tool.frappe-nix.unchecked-js]]
-path = "flow/flow/doctype/flow_run/flow_run.js"
-reason = "Not yet typed with JSDoc; checkJs reports errors"
-
-[[tool.frappe-nix.unchecked-js]]
-path = "flow/flow/doctype/flow_session/flow_session.js"
-reason = "Not yet typed with JSDoc; checkJs reports errors"
+# The panel is a Vue SPA in JavaScript: vue-tsc runs checkJs over the components and scripts.
+[[tool.frappe-nix.typescript.spa]]
+root = "frontend"
+include = ["frontend/src/**"]
+tsconfig = "frontend/tsconfig.json"
+check = "node scripts/vue-tsc.cjs --noEmit -p frontend/tsconfig.json"
 
 [tool.ty.environment]
 python-version = "3.14"

@@ -4,11 +4,14 @@ import { FeatherIcon } from "@/lib/ui";
 import SearchInput from "./SearchInput.vue";
 import { __ } from "@/lib/translate";
 
+/** @import { PropType } from "vue" */
+/** @import { MenuItem } from "@/lib/types" */
+
 // Inline dropdown (rendered within #flow-root, never teleported) so its styles
 // stay scoped to the panel.
 const props = defineProps({
-	modelValue: { default: null },
-	items: { type: Array, default: () => [] }, // [{ value, label }]
+	modelValue: { type: /** @type {PropType<string | null>} */ (String), default: null },
+	items: { type: /** @type {PropType<MenuItem[]>} */ (Array), default: () => [] },
 	align: { type: String, default: "left" }, // left | right
 	disabled: { type: Boolean, default: false },
 	searchable: { type: Boolean, default: false },
@@ -18,7 +21,7 @@ const emit = defineEmits(["update:modelValue"]);
 // Show the search field only once the list is long enough to warrant it.
 const SEARCH_THRESHOLD = 7;
 const open = ref(false);
-const menu = ref(null);
+const menu = ref(/** @type {HTMLElement | null} */ (null));
 const shift = ref(0);
 const query = ref("");
 
@@ -33,6 +36,7 @@ function toggle() {
 	if (props.disabled) return;
 	open.value = !open.value;
 }
+/** @param {MenuItem} item */
 function select(item) {
 	emit("update:modelValue", item.value);
 	open.value = false;
