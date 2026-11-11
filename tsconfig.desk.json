@@ -11,6 +11,10 @@
 		"**/public/dist/**",
 		"flow/www/**",
 		"**/web_form/**",
-		"flow/templates/**"
+		"flow/templates/**",
+		"flow/flow/doctype/flow_knowledge_source/flow_knowledge_source.js",
+		"flow/flow/doctype/flow_model/flow_model.js",
+		"flow/flow/doctype/flow_run/flow_run.js",
+		"flow/flow/doctype/flow_session/flow_session.js"
 	]
 }

@@ -123,3 +123,22 @@ rules = { "unicorn/no-useless-spread" = "off" }
 [[tool.frappe-nix.js.oxlint.overrides]]
 files = ["frontend/src/api/stream.js"]
 rules = { "eslint/no-await-in-loop" = "off" }
+
+# Desk scripts that strict checkJs reports on today. Typing them (JSDoc) is the next PR's work, and
+# the list only shrinks from here.
+
+[[tool.frappe-nix.unchecked-js]]
+path = "flow/flow/doctype/flow_knowledge_source/flow_knowledge_source.js"
+reason = "Not yet typed with JSDoc; checkJs reports errors"
+
+[[tool.frappe-nix.unchecked-js]]
+path = "flow/flow/doctype/flow_model/flow_model.js"
+reason = "Not yet typed with JSDoc; checkJs reports errors"
+
+[[tool.frappe-nix.unchecked-js]]
+path = "flow/flow/doctype/flow_run/flow_run.js"
+reason = "Not yet typed with JSDoc; checkJs reports errors"
+
+[[tool.frappe-nix.unchecked-js]]
+path = "flow/flow/doctype/flow_session/flow_session.js"
+reason = "Not yet typed with JSDoc; checkJs reports errors"
