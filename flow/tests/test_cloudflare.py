@@ -413,17 +413,17 @@ class TestAgainstCloudflare(IntegrationTestCase):
 		cls.cloudflare = cls.enterClassContext(MockCloudflare())
 		cls.enterClassContext(patch.dict(frappe.conf, {"developer_mode": 1}))
 
+	def _provider(self, **overrides: Any) -> FlowProvider:
+		return cast(
+			FlowProvider, frappe.get_doc(provider_row(self.cloudflare.base_url, **overrides)).insert()
+		)
+
 	def setUp(self):
 		self.cloudflare.reset()
 		self.provider = self._provider()
 
 	def tearDown(self):
 		frappe.db.rollback()
-
-	def _provider(self, **overrides: Any) -> FlowProvider:
-		return cast(
-			FlowProvider, frappe.get_doc(provider_row(self.cloudflare.base_url, **overrides)).insert()
-		)
 
 	def _model(self, **overrides: Any) -> Model:
 		return Model(cast(FlowModel, frappe.get_doc(_model(**overrides)).insert()).name)

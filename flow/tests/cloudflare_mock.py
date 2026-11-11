@@ -95,29 +95,6 @@ class MockCloudflare:
 		# Reject `stream_options`, as a model that doesn't accept it would.
 		self.reject_stream_options = False
 
-	def __enter__(self) -> MockCloudflare:
-		mock = self
-
-		class Handler(BaseHTTPRequestHandler):
-			def log_message(self, format: str, *args: Any) -> None:
-				pass
-
-			def do_GET(self) -> None:
-				mock.handle(self, "GET")
-
-			def do_POST(self) -> None:
-				mock.handle(self, "POST")
-
-		self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-		self.server.daemon_threads = True
-		threading.Thread(target=self.server.serve_forever, daemon=True).start()
-		return self
-
-	def __exit__(self, *exc: object) -> None:
-		if self.server:
-			self.server.shutdown()
-			self.server.server_close()
-
 	@property
 	def base_url(self) -> str:
 		assert self.server
@@ -125,35 +102,6 @@ class MockCloudflare:
 
 	def calls(self, suffix: str) -> list[dict[str, Any]]:
 		return [r for r in self.requests if r["path"].endswith(suffix)]
-
-	def handle(self, request: BaseHTTPRequestHandler, method: str) -> None:
-		url = urlparse(request.path)
-		length = int(request.headers.get("content-length") or 0)
-		body = json.loads(request.rfile.read(length)) if length else None
-		record = {
-			"method": method,
-			"path": url.path,
-			"query": {k: v[0] for k, v in parse_qs(url.query).items()},
-			"headers": {k.lower(): v for k, v in request.headers.items()},
-			"body": body,
-		}
-		self.requests.append(record)
-
-		if self.fail_with:
-			status, self.fail_with = self.fail_with, None
-			return self._json(request, status, _error(status * 10, "Injected failure"))
-		if record["headers"].get("authorization") != f"Bearer {self.token}":
-			return self._json(request, 401, _error(10000, "Authentication error"))
-		if f"/accounts/{self.account_id}/" not in url.path:
-			return self._json(request, 403, _error(7003, "Could not route to the account"))
-
-		if method == "GET" and url.path.endswith("/ai/models/search"):
-			return self._catalogue(request, record)
-		if method == "POST" and url.path.endswith("/ai/v1/chat/completions"):
-			return self._chat(request, record)
-		if method == "POST" and url.path.endswith("/ai/v1/embeddings"):
-			return self._embeddings(request, record)
-		self._json(request, 404, _error(7000, "No route for that URL"))
 
 	def _json(self, request: BaseHTTPRequestHandler, status: int, payload: dict[str, Any]) -> None:
 		data = json.dumps(payload).encode()
@@ -179,6 +127,47 @@ class MockCloudflare:
 			200,
 			{"success": True, "result": window, "errors": [], "messages": [], "result_info": info},
 		)
+
+	def _stream(
+		self, request: BaseHTTPRequestHandler, body: dict[str, Any], wants_tool: bool, usage: dict[str, int]
+	) -> None:
+		def chunk(delta: dict[str, Any], finish: str | None = None) -> dict[str, Any]:
+			return {
+				"id": "chatcmpl-mock",
+				"object": "chat.completion.chunk",
+				"created": 1,
+				"model": body["model"],
+				"choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
+			}
+
+		if wants_tool:
+			call = {"index": 0, "id": "call_1", "type": "function"}
+			events = [
+				chunk(
+					{
+						"role": "assistant",
+						"tool_calls": [{**call, "function": {"name": "add", "arguments": '{"a":'}}],
+					}
+				),
+				chunk({"tool_calls": [{"index": 0, "function": {"arguments": " 1, "}}]}),
+				chunk({"tool_calls": [{"index": 0, "function": {"arguments": '"b": 2}'}}]}),
+				chunk({}, "tool_calls"),
+			]
+		else:
+			events = [
+				chunk({"role": "assistant", "content": "Hello"}),
+				chunk({"content": " from the mock"}),
+				chunk({}, "stop"),
+			]
+		if (body.get("stream_options") or {}).get("include_usage"):
+			events.append({**chunk({}), "choices": [], "usage": usage})
+
+		request.send_response(200)
+		request.send_header("Content-Type", "text/event-stream")
+		request.end_headers()
+		for event in events:
+			request.wfile.write(f"data: {json.dumps(event)}\n\n".encode())
+		request.wfile.write(b"data: [DONE]\n\n")
 
 	def _chat(self, request: BaseHTTPRequestHandler, record: dict[str, Any]) -> None:
 		body = record["body"]
@@ -223,47 +212,6 @@ class MockCloudflare:
 			},
 		)
 
-	def _stream(
-		self, request: BaseHTTPRequestHandler, body: dict[str, Any], wants_tool: bool, usage: dict[str, int]
-	) -> None:
-		def chunk(delta: dict[str, Any], finish: str | None = None) -> dict[str, Any]:
-			return {
-				"id": "chatcmpl-mock",
-				"object": "chat.completion.chunk",
-				"created": 1,
-				"model": body["model"],
-				"choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
-			}
-
-		if wants_tool:
-			call = {"index": 0, "id": "call_1", "type": "function"}
-			events = [
-				chunk(
-					{
-						"role": "assistant",
-						"tool_calls": [{**call, "function": {"name": "add", "arguments": '{"a":'}}],
-					}
-				),
-				chunk({"tool_calls": [{"index": 0, "function": {"arguments": " 1, "}}]}),
-				chunk({"tool_calls": [{"index": 0, "function": {"arguments": '"b": 2}'}}]}),
-				chunk({}, "tool_calls"),
-			]
-		else:
-			events = [
-				chunk({"role": "assistant", "content": "Hello"}),
-				chunk({"content": " from the mock"}),
-				chunk({}, "stop"),
-			]
-		if (body.get("stream_options") or {}).get("include_usage"):
-			events.append({**chunk({}), "choices": [], "usage": usage})
-
-		request.send_response(200)
-		request.send_header("Content-Type", "text/event-stream")
-		request.end_headers()
-		for event in events:
-			request.wfile.write(f"data: {json.dumps(event)}\n\n".encode())
-		request.wfile.write(b"data: [DONE]\n\n")
-
 	def _embeddings(self, request: BaseHTTPRequestHandler, record: dict[str, Any]) -> None:
 		body = record["body"]
 		texts = body["input"] if isinstance(body["input"], list) else [body["input"]]
@@ -281,6 +229,58 @@ class MockCloudflare:
 				"usage": {"prompt_tokens": len(texts), "total_tokens": len(texts)},
 			},
 		)
+
+	def handle(self, request: BaseHTTPRequestHandler, method: str) -> None:
+		url = urlparse(request.path)
+		length = int(request.headers.get("content-length") or 0)
+		body = json.loads(request.rfile.read(length)) if length else None
+		record = {
+			"method": method,
+			"path": url.path,
+			"query": {k: v[0] for k, v in parse_qs(url.query).items()},
+			"headers": {k.lower(): v for k, v in request.headers.items()},
+			"body": body,
+		}
+		self.requests.append(record)
+
+		if self.fail_with:
+			status, self.fail_with = self.fail_with, None
+			return self._json(request, status, _error(status * 10, "Injected failure"))
+		if record["headers"].get("authorization") != f"Bearer {self.token}":
+			return self._json(request, 401, _error(10000, "Authentication error"))
+		if f"/accounts/{self.account_id}/" not in url.path:
+			return self._json(request, 403, _error(7003, "Could not route to the account"))
+
+		if method == "GET" and url.path.endswith("/ai/models/search"):
+			return self._catalogue(request, record)
+		if method == "POST" and url.path.endswith("/ai/v1/chat/completions"):
+			return self._chat(request, record)
+		if method == "POST" and url.path.endswith("/ai/v1/embeddings"):
+			return self._embeddings(request, record)
+		self._json(request, 404, _error(7000, "No route for that URL"))
+
+	def __enter__(self) -> MockCloudflare:
+		mock = self
+
+		class Handler(BaseHTTPRequestHandler):
+			def log_message(self, format: str, *args: Any) -> None:
+				pass
+
+			def do_GET(self) -> None:
+				mock.handle(self, "GET")
+
+			def do_POST(self) -> None:
+				mock.handle(self, "POST")
+
+		self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+		self.server.daemon_threads = True
+		threading.Thread(target=self.server.serve_forever, daemon=True).start()
+		return self
+
+	def __exit__(self, *exc: object) -> None:
+		if self.server:
+			self.server.shutdown()
+			self.server.server_close()
 
 
 def provider_row(base_url: str | None = None, **overrides: Any) -> dict[str, Any]:

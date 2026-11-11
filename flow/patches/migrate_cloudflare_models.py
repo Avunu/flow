@@ -133,6 +133,20 @@ def _create_provider(*, enabled: bool) -> None:
 	doc.db_insert()
 
 
+def _set_up_provider(endpoint: Endpoint, token: str | None, *, was_legacy_url: bool) -> None:
+	account, gateway = endpoint
+	values: dict = {"account_id": account}
+	if token:
+		values["enabled"] = 1  # the models it takes over were working, so it must be on
+	if gateway and not frappe.db.get_value("Flow Provider", PROVIDER, "gateway_id"):
+		values["gateway_id"] = gateway
+	if was_legacy_url:
+		values["base_url"] = None  # now derived from the account id
+	frappe.db.set_value("Flow Provider", PROVIDER, values, update_modified=False)
+	if token and not get_decrypted_password("Flow Provider", PROVIDER, "api_key", raise_exception=False):
+		set_encrypted_password("Flow Provider", PROVIDER, token, "api_key")
+
+
 def execute():
 	candidates = _candidates()
 	if not candidates:
@@ -201,17 +215,3 @@ def execute():
 	)
 	if not token:
 		_log("the cloudflare provider has no API token: set one before using Cloudflare models")
-
-
-def _set_up_provider(endpoint: Endpoint, token: str | None, *, was_legacy_url: bool) -> None:
-	account, gateway = endpoint
-	values: dict = {"account_id": account}
-	if token:
-		values["enabled"] = 1  # the models it takes over were working, so it must be on
-	if gateway and not frappe.db.get_value("Flow Provider", PROVIDER, "gateway_id"):
-		values["gateway_id"] = gateway
-	if was_legacy_url:
-		values["base_url"] = None  # now derived from the account id
-	frappe.db.set_value("Flow Provider", PROVIDER, values, update_modified=False)
-	if token and not get_decrypted_password("Flow Provider", PROVIDER, "api_key", raise_exception=False):
-		set_encrypted_password("Flow Provider", PROVIDER, token, "api_key")
