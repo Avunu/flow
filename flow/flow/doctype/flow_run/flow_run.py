@@ -6,10 +6,12 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Generator
 from dataclasses import asdict, dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 import frappe
 from frappe import _
+from frappe.database.utils import commit_after_response
 from frappe.model.document import Document
 
 if TYPE_CHECKING:
@@ -176,45 +178,48 @@ def stream_with_persistence(
 	"""Wrap an agent event stream with run lifecycle: announce RunStarted, persist on
 	Done, mark Failed + emit Error if the stream raises.
 
-	Commits explicitly: streamed responses are iterated by WSGI *after* the request
-	handler returns, so the framework's end-of-request commit has already fired by
-	the time persistence happens here.
+	Streamed responses are iterated by WSGI *after* the request handler returns, so the
+	framework's end-of-request commit has already fired by the time persistence happens
+	here. The outcome is therefore written through `commit_after_response`: in a request it
+	runs, and is committed, once the response body is closed (also when the client
+	disconnects); outside a request it runs at once and the caller owns the transaction.
 	"""
 	from flow.lib.agent import Done
 
-	yield RunStarted(name=run.name, session=run.session)
-
 	final_result: RunResult | None = None
-	persisted = False
+	failure: str | None = None
+
+	yield RunStarted(name=run.name, session=run.session)
 	try:
 		for event in make_events():
 			if isinstance(event, Done):
 				final_result = event.result
 			yield event
-
-		if final_result is not None:
-			run.apply_result(final_result)
-			persisted = True
-			if not frappe.flags.in_test:
-				frappe.db.commit()
 	except Exception as e:
-		persisted = True
-		run.mark_failed(str(e))
-		if not frappe.flags.in_test:
-			frappe.db.commit()
-		yield Error(message=str(e))
+		failure = str(e)
 	finally:
 		# The run's tools have finished; drop the source_run flag set for update_memory.
 		frappe.flags.flow_run = None
-		# Stream cut short (e.g. client disconnect raises GeneratorExit) before
-		# we persisted — record the run as failed so it doesn't sit in "Running".
-		if not persisted:
-			try:
-				run.mark_failed("Stream interrupted")
-				if not frappe.flags.in_test:
-					frappe.db.commit()
-			except Exception:
-				pass
+		# With neither a result nor a failure the stream was cut short (e.g. a client
+		# disconnect raises GeneratorExit): the settle step records the run as failed so
+		# it doesn't sit in "Running".
+		commit_after_response(partial(_settle_run, run, final_result, failure))
+
+	if failure is not None:
+		yield Error(message=failure)
+
+
+def _settle_run(run: FlowRun, result: RunResult | None, failure: str | None) -> None:
+	"""Write a finished stream's outcome onto its run: the result if there is one and it
+	applies, otherwise Failed with the stream's error."""
+	if failure is None and result is not None:
+		try:
+			run.apply_result(result)
+		except Exception as e:
+			failure = str(e)
+		else:
+			return
+	run.mark_failed(failure or "Stream interrupted")
 
 
 def _status_from_result(result: RunResult) -> str:

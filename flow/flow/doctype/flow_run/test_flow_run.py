@@ -2,12 +2,24 @@
 # See license.txt
 
 import json
+from collections.abc import Callable, Generator
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import patch
 
 import frappe
 from frappe.tests import IntegrationTestCase
+from frappe.utils import CallbackManager
 
-from flow.flow.doctype.flow_run.flow_run import create_run, persist_result
-from flow.lib.agent import Question, RunResult
+from flow.flow.doctype.flow_run.flow_run import (
+	Error,
+	FlowRun,
+	RunStarted,
+	create_run,
+	persist_result,
+	stream_with_persistence,
+)
+from flow.lib.agent import Done, Question, RunResult, TextChunk
 from flow.lib.model import ToolCall
 
 
@@ -264,3 +276,106 @@ class TestFlowRunValidation(IntegrationTestCase):
 		)
 		with self.assertRaisesRegex(frappe.ValidationError, "JSON"):
 			doc.insert(ignore_permissions=True)
+
+
+def _stream(*events: Any, then: Exception | None = None) -> Callable[[], Generator[Any]]:
+	"""A make_events factory that yields `events`, then raises `then` if given."""
+
+	def make_events() -> Generator[Any]:
+		yield from events
+		if then is not None:
+			raise then
+
+	return make_events
+
+
+class TestStreamWithPersistence(IntegrationTestCase):
+	"""The run's outcome is written as its stream ends and committed by commit_after_response."""
+
+	def setUp(self):
+		session = _new_session(_make_agent())
+		self.run = create_run(source="Manual", input="hi", session=session)
+
+	def tearDown(self):
+		frappe.flags.flow_run = None
+		frappe.db.rollback()
+
+	def _stored(self) -> FlowRun:
+		return frappe.get_doc("Flow Run", self.run.name)
+
+	def test_done_completes_the_run(self):
+		events = list(stream_with_persistence(_stream(TextChunk("a"), Done(_completed_result())), self.run))
+
+		self.assertIsInstance(events[0], RunStarted)
+		self.assertEqual(events[0].name, self.run.name)
+		self.assertIsInstance(events[-1], Done)
+		self.assertEqual(self._stored().status, "Completed")
+		self.assertEqual(self._stored().output, "all done")
+
+	def test_raised_error_fails_the_run_and_is_emitted(self):
+		events = list(stream_with_persistence(_stream(then=RuntimeError("model blew up")), self.run))
+
+		self.assertIsInstance(events[-1], Error)
+		self.assertEqual(events[-1].message, "model blew up")
+		stored = self._stored()
+		self.assertEqual(stored.status, "Failed")
+		self.assertEqual(stored.error, "model blew up")
+
+	def test_stream_ending_without_done_fails_the_run(self):
+		list(stream_with_persistence(_stream(TextChunk("a")), self.run))
+
+		stored = self._stored()
+		self.assertEqual(stored.status, "Failed")
+		self.assertEqual(stored.error, "Stream interrupted")
+
+	def test_closing_the_stream_early_fails_the_run(self):
+		stream = stream_with_persistence(_stream(TextChunk("a"), TextChunk("b")), self.run)
+		next(stream)  # RunStarted
+		next(stream)  # first chunk
+		stream.close()  # the client went away
+
+		stored = self._stored()
+		self.assertEqual(stored.status, "Failed")
+		self.assertEqual(stored.error, "Stream interrupted")
+
+	def test_result_that_cannot_be_applied_fails_the_run(self):
+		with patch.object(FlowRun, "apply_result", side_effect=RuntimeError("cannot save")):
+			list(stream_with_persistence(_stream(Done(_completed_result())), self.run))
+
+		stored = self._stored()
+		self.assertEqual(stored.status, "Failed")
+		self.assertEqual(stored.error, "cannot save")
+
+	def test_clears_the_active_run_flag(self):
+		frappe.flags.flow_run = self.run.name
+		list(stream_with_persistence(_stream(Done(_completed_result())), self.run))
+		self.assertIsNone(frappe.flags.flow_run)
+
+	def test_outcome_is_deferred_to_commit_after_response(self):
+		scheduled: list[Callable[[], None]] = []
+		with patch("flow.flow.doctype.flow_run.flow_run.commit_after_response", side_effect=scheduled.append):
+			list(stream_with_persistence(_stream(Done(_completed_result())), self.run))
+
+			# Nothing is written while the response body is still open...
+			self.assertEqual(len(scheduled), 1)
+			self.assertEqual(self._stored().status, "Running")
+			# ...and the scheduled step writes the outcome.
+			scheduled[0]()
+		self.assertEqual(self._stored().status, "Completed")
+
+	def test_request_commits_once_after_the_response_closes(self):
+		request = SimpleNamespace(after_response=CallbackManager())
+		# Outside tests commit_after_response defers to the request's after-response callbacks.
+		with (
+			patch.object(frappe, "in_test", False),
+			patch.object(frappe.local, "request", request, create=True),
+			patch.object(frappe.db, "commit") as commit,
+		):
+			list(stream_with_persistence(_stream(Done(_completed_result())), self.run))
+			commit.assert_not_called()
+			self.assertEqual(self._stored().status, "Running")
+
+			request.after_response.run()
+
+			commit.assert_called_once_with()
+		self.assertEqual(self._stored().status, "Completed")
