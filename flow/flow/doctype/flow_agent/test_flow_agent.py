@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import frappe
 from frappe.tests import IntegrationTestCase
+from pydantic import ValidationError as PydanticValidationError
 
 from flow.lib.agent import Agent
 from flow.lib.model import ChatResponse, Model
@@ -156,7 +157,7 @@ class TestFlowAgentKnowledgeSearch(IntegrationTestCase):
 	def test_llm_supplied_kbs_are_rejected(self):
 		tool = self._search_tool([self.kb.name])
 		with patch("flow.knowledge.retriever.retrieve", return_value=[]) as mock:  # noqa: SIM117
-			with self.assertRaises(Exception):  # noqa: B017
+			with self.assertRaises(PydanticValidationError):
 				tool(query="hello", kbs=["Some Other KB"])
 		mock.assert_not_called()
 
@@ -246,6 +247,7 @@ class TestFlowAgentModelPermission(IntegrationTestCase):
 				"doctype": "User",
 				"email": "model-perm@example.com",
 				"first_name": "Model Perm",
+				"roles": [{"role": "Report Manager"}],
 				"send_welcome_email": 0,
 			}
 		).insert(ignore_permissions=True)

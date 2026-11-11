@@ -442,6 +442,7 @@ def _ensure_user(email: str) -> str:
 			"doctype": "User",
 			"email": email,
 			"first_name": email.split("@")[0],
+			"roles": [{"role": "Report Manager"}],
 			"send_welcome_email": 0,
 			"enabled": 1,
 		}
