@@ -200,6 +200,16 @@ def _literal_schema(sliced: ast.expr) -> dict[str, Any]:
 	return schema
 
 
+def _annotated_schema(sliced: ast.expr) -> dict[str, Any]:
+	if not isinstance(sliced, ast.Tuple) or not sliced.elts:
+		return {}
+	schema = _annotation_schema(sliced.elts[0])
+	for meta in sliced.elts[1:]:
+		if isinstance(meta, ast.Constant) and isinstance(meta.value, str):
+			return {**schema, "description": meta.value}
+	return schema
+
+
 def _subscript_schema(node: ast.Subscript) -> dict[str, Any]:
 	base = node.value
 	base_name = (
@@ -223,13 +233,3 @@ def _subscript_schema(node: ast.Subscript) -> dict[str, Any]:
 	if base_name in _OBJECT_NAMES:
 		return {"type": "object"}
 	return {}
-
-
-def _annotated_schema(sliced: ast.expr) -> dict[str, Any]:
-	if not isinstance(sliced, ast.Tuple) or not sliced.elts:
-		return {}
-	schema = _annotation_schema(sliced.elts[0])
-	for meta in sliced.elts[1:]:
-		if isinstance(meta, ast.Constant) and isinstance(meta.value, str):
-			return {**schema, "description": meta.value}
-	return schema
