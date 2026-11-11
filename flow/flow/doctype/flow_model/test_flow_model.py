@@ -13,7 +13,7 @@ from flow.flow.doctype.flow_model.flow_model import (
 	_detect_context_window,
 	get_provider_models,
 )
-from flow.tests.cloudflare_mock import provider_row
+from flow.tests.cloudflare_mock import offline_catalogue, provider_row
 
 
 def _model(**overrides: Any) -> dict:
@@ -91,6 +91,7 @@ class TestFlowModelValidation(IntegrationTestCase):
 
 	def test_cloudflare_model_id_validates_and_saves(self):
 		frappe.get_doc(provider_row()).insert()
+		offline_catalogue()
 		doc = cast(
 			FlowModel,
 			frappe.get_doc(_model(title="Cloudflare Id", model_id="cloudflare/@cf/zai-org/glm-5.3-flash")),

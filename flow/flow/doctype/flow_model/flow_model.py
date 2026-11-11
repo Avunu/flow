@@ -3,6 +3,7 @@
 
 import json
 import re
+from typing import Any
 from urllib.parse import urlparse
 
 import frappe
@@ -161,8 +162,28 @@ class FlowModel(Document):
 				_("Set up and enable the cloudflare Flow Provider first."),
 				title=_("Cloudflare Not Configured"),
 			)
-		if self.params:
-			cloudflare.validate_extra_headers(json.loads(self.params).get("extra_headers"))
+		params = json.loads(self.params) if self.params else {}
+		cloudflare.validate_extra_headers(params.get("extra_headers"))
+
+		entry = cloudflare.catalogue_entry(self.model_id, fetch=True)
+		cloudflare.validate_reasoning_effort(entry, params)
+		if self.is_new() or self.has_value_changed("model_id"):
+			self._warn_about_catalogue(entry)
+
+	def _warn_about_catalogue(self, entry: cloudflare.CatalogueEntry | None):
+		catalogue = cloudflare.get_catalogue(fetch=False)
+		if entry:
+			notice = cloudflare.deprecation_notice(entry, catalogue or [])
+			if notice:
+				frappe.msgprint(notice, title=_("Deprecation"), indicator="orange")
+		elif catalogue:
+			frappe.msgprint(
+				_(
+					"{0} is not in your Cloudflare model catalogue. Sync models on the Cloudflare provider if it is new."
+				).format(cloudflare.strip_provider(self.model_id)),
+				title=_("Unknown Model"),
+				indicator="orange",
+			)
 
 	@frappe.whitelist()
 	def test_connection(self):
@@ -195,8 +216,14 @@ class FlowModel(Document):
 
 
 def _detect_context_window(model_id: str) -> int:
-	"""Max input tokens for `model_id` per litellm, or 0 if unknown/unmapped."""
+	"""Max input tokens for `model_id`: from the Cloudflare catalogue for a Workers AI model, else per
+	litellm. 0 if unknown/unmapped."""
 	import litellm
+
+	if provider_of(model_id) == cloudflare.PROVIDER:
+		entry = cloudflare.catalogue_entry(model_id, fetch=True)
+		if entry and entry.context_window:
+			return entry.context_window
 
 	try:
 		info = litellm.get_model_info(model_id)
@@ -206,10 +233,28 @@ def _detect_context_window(model_id: str) -> int:
 
 
 @frappe.whitelist()
-def get_provider_models(provider: str | None = None) -> list[str]:
+def get_provider_models(provider: str | None = None) -> list[str] | list[dict[str, str]]:
 	if not provider:
 		return []
 
+	name = provider.strip().lower()
+	# The Cloudflare catalogue comes from the cache only: a fetch spends the stored token, and any
+	# desk user can call this. "Sync Models" on the provider fills it.
+	if name == cloudflare.PROVIDER and (catalogue := cloudflare.get_catalogue(fetch=False)):
+		return [{"value": entry.id, "description": cloudflare.describe(entry)} for entry in catalogue]
+
 	import litellm
 
-	return sorted(litellm.models_by_provider.get(provider.strip().lower(), set()))
+	return sorted(litellm.models_by_provider.get(name, set()))
+
+
+@frappe.whitelist()
+def get_model_hints(model_id: str | None = None) -> dict[str, Any]:
+	"""Context window, reasoning efforts and deprecation of a Cloudflare model, for the form. Cached
+	data only, so it never reaches Cloudflare."""
+	frappe.has_permission("Flow Model", "read", throw=True)
+	if not model_id or provider_of(model_id) != cloudflare.PROVIDER:
+		return {}
+	catalogue = cloudflare.get_catalogue(fetch=False) or []
+	entry = cloudflare.catalogue_entry(model_id, fetch=False)
+	return cloudflare.model_hints(entry, catalogue) if entry else {}

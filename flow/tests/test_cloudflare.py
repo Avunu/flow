@@ -15,7 +15,7 @@ from flow.flow.doctype.flow_provider.flow_provider import FlowProvider
 from flow.knowledge import embedder
 from flow.lib import cloudflare
 from flow.lib.model import ChatResponse, Model, ToolCall, ToolCallBegin, resolve_call_kwargs
-from flow.tests.cloudflare_mock import ACCOUNT_ID, TOKEN, MockCloudflare, provider_row
+from flow.tests.cloudflare_mock import ACCOUNT_ID, TOKEN, MockCloudflare, offline_catalogue, provider_row
 
 GLM = "@cf/zai-org/glm-5.3-flash"
 
@@ -194,6 +194,7 @@ class TestProviderValidation(IntegrationTestCase):
 class TestModelValidation(IntegrationTestCase):
 	def setUp(self):
 		frappe.get_doc(provider_row()).insert()
+		offline_catalogue()
 
 	def tearDown(self):
 		frappe.db.rollback()
@@ -233,7 +234,7 @@ class TestModelValidation(IntegrationTestCase):
 		doc = self._insert(provider=None, model_id="openai/gpt-4o-mini", title="Legacy")
 		# Seed the old shape directly: validation would refuse it today.
 		frappe.db.set_value("Flow Model", doc.name, "model_id", f"openai/{GLM}")
-		doc = cast(FlowModel, frappe.get_doc("Flow Model", doc.name))
+		doc = cast(FlowModel, frappe.get_doc("Flow Model", str(doc.name)))
 		doc.enabled = 0
 		doc.save()
 
@@ -242,7 +243,7 @@ class TestModelValidation(IntegrationTestCase):
 	def test_changing_an_unmigrated_rows_id_to_another_workers_ai_id_is_rejected(self):
 		doc = self._insert(provider=None, model_id="openai/gpt-4o-mini", title="Legacy")
 		frappe.db.set_value("Flow Model", doc.name, "model_id", f"openai/{GLM}")
-		doc = cast(FlowModel, frappe.get_doc("Flow Model", doc.name))
+		doc = cast(FlowModel, frappe.get_doc("Flow Model", str(doc.name)))
 		doc.model_id = "openai/@cf/zai-org/glm-5.3"
 		with self.assertRaisesRegex(frappe.ValidationError, "use the Cloudflare provider"):
 			doc.save()
@@ -265,6 +266,7 @@ class TestModelValidation(IntegrationTestCase):
 		self.assertTrue(doc.name)
 		frappe.db.rollback()
 		frappe.get_doc(provider_row()).insert()
+		offline_catalogue()
 
 		for bad in ({"authorization": "Bearer x"}, {"cf-aig-authorization": "x"}, {"cf-aig-a": "x\r\ny"}):
 			with self.subTest(headers=bad), self.assertRaisesRegex(frappe.ValidationError, "Header|header"):
@@ -344,12 +346,10 @@ class TestResolver(IntegrationTestCase):
 	def test_cloudflare_models_take_no_credentials_of_their_own(self):
 		frappe.get_doc(provider_row()).insert()
 
-		for own in ({"api_key": "test-key"}, {"base_url": "https://example.com"}):
-			with (
-				self.subTest(own=own),
-				self.assertRaisesRegex(ValueError, "from the cloudflare Flow Provider"),
-			):
-				resolve_call_kwargs(f"cloudflare/{GLM}", **own)
+		with self.assertRaisesRegex(ValueError, "from the cloudflare Flow Provider"):
+			resolve_call_kwargs(f"cloudflare/{GLM}", api_key="test-key")
+		with self.assertRaisesRegex(ValueError, "from the cloudflare Flow Provider"):
+			resolve_call_kwargs(f"cloudflare/{GLM}", base_url="https://example.com")
 
 	def test_only_workers_ai_ids_resolve(self):
 		frappe.get_doc(provider_row()).insert()
@@ -414,9 +414,7 @@ class TestAgainstCloudflare(IntegrationTestCase):
 		cls.enterClassContext(patch.dict(frappe.conf, {"developer_mode": 1}))
 
 	def setUp(self):
-		self.cloudflare.requests.clear()
-		self.cloudflare.fail_with = None
-		self.cloudflare.reject_stream_options = False
+		self.cloudflare.reset()
 		self.provider = self._provider()
 
 	def tearDown(self):
@@ -547,7 +545,7 @@ class TestAgainstCloudflare(IntegrationTestCase):
 			frappe.get_doc(_model(title="Cloudflare Embed", model_id="@cf/baai/bge-m3")).insert(),
 		)
 
-		self.assertEqual(embedder.probe_dimension(embedding_model.name), 4)
+		self.assertEqual(embedder.probe_dimension(str(embedding_model.name)), 4)
 
 		(request,) = self.cloudflare.calls("/embeddings")
 		self.assertEqual(request["path"], f"/client/v4/accounts/{ACCOUNT_ID}/ai/v1/embeddings")
@@ -574,4 +572,4 @@ class TestAgainstCloudflare(IntegrationTestCase):
 		frappe.db.set_value("Flow Provider", "cloudflare", "enabled", 0)
 
 		with self.assertRaisesRegex(frappe.ValidationError, "enable the cloudflare Flow Provider"):
-			embedder.probe_dimension(embedding_model.name)
+			embedder.probe_dimension(str(embedding_model.name))

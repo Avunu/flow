@@ -80,13 +80,20 @@ class MockCloudflare:
 		self.token = token
 		self.account_id = account_id
 		self.requests: list[dict[str, Any]] = []
+		self.server: ThreadingHTTPServer | None = None
+		self.reset()
+
+	def reset(self) -> None:
+		"""Back to the fixtures, with no request recorded and no failure armed."""
+		self.requests.clear()
 		self.native = native_models()
 		self.openrouter = openrouter_models()
 		# Set to a status code to fail the next call with Cloudflare's error envelope.
 		self.fail_with: int | None = None
+		# Answer `format=openrouter` catalogue calls with an error, as an older API would.
+		self.no_openrouter = False
 		# Reject `stream_options`, as a model that doesn't accept it would.
 		self.reject_stream_options = False
-		self.server: ThreadingHTTPServer | None = None
 
 	def __enter__(self) -> MockCloudflare:
 		mock = self
@@ -160,6 +167,8 @@ class MockCloudflare:
 		query = record["query"]
 		page = int(query.get("page", 1))
 		openrouter = query.get("format") == "openrouter"
+		if openrouter and self.no_openrouter:
+			return self._json(request, 400, _error(1001, "Unknown format"))
 		items = copy.deepcopy(self.openrouter if openrouter else self.native)
 		window = items[(page - 1) * PAGE_SIZE : page * PAGE_SIZE]
 		if openrouter:
@@ -286,3 +295,10 @@ def provider_row(base_url: str | None = None, **overrides: Any) -> dict[str, Any
 	if base_url:
 		row["base_url"] = base_url
 	return {**row, **overrides}
+
+
+def offline_catalogue() -> None:
+	"""Cache an empty catalogue, so saving a Cloudflare model never goes looking for the real one."""
+	from flow.lib import cloudflare
+
+	cloudflare.store_catalogue([])

@@ -9,6 +9,7 @@ from frappe import _
 from frappe.model.document import Document
 
 from flow.lib import cloudflare
+from flow.utils.errors import throw
 
 # Keys litellm derives itself or that have dedicated fields — not allowed in extra_params.
 RESERVED_PARAM_KEYS = frozenset(
@@ -46,6 +47,15 @@ class FlowProvider(Document):
 		self._validate_base_url()
 		self._validate_extra_params()
 		self._validate_cloudflare()
+
+	def on_update(self):
+		# New credentials or endpoint mean a different catalogue; it reloads on first use.
+		if self.provider == cloudflare.PROVIDER:
+			cloudflare.clear_catalogue()
+
+	def on_trash(self):
+		if self.provider == cloudflare.PROVIDER:
+			cloudflare.clear_catalogue()
 
 	def _normalize(self):
 		self.provider = (self.provider or "").strip().lower()
@@ -118,3 +128,62 @@ class FlowProvider(Document):
 			frappe.throw(
 				_("An API token is required for the cloudflare provider."), title=_("Missing API Token")
 			)
+
+	def _require_cloudflare(self):
+		self.check_permission("write")
+		if self.provider != cloudflare.PROVIDER:
+			throw(_("This only applies to the cloudflare provider."), title=_("Invalid Provider"))
+
+	@frappe.whitelist()
+	def test_connection(self):
+		"""Read the model catalogue with the saved token: checks the account id and the token's scope
+		without spending any inference."""
+		self._require_cloudflare()
+		url = cloudflare.catalogue_url(self)
+		token = self.get_password("api_key", raise_exception=False)
+		if url is None or not token:
+			throw(
+				_("The catalogue is only available on the default Cloudflare endpoint."),
+				title=_("Not Available"),
+			)
+		try:
+			body = cloudflare.get_page(url, token, {"per_page": 1})
+		except cloudflare.CatalogueError as e:
+			throw(cloudflare.redact(str(e), token), title=_("Connection Failed"))
+
+		info = body.get("result_info")
+		total = info.get("total_count") if isinstance(info, dict) else None
+		gateway = self.gateway_id or _("none (direct)")
+		return {
+			"ok": True,
+			"message": _("Reached the account ({0} models in the catalogue). Gateway: {1}.").format(
+				total if isinstance(total, int) else "?", gateway
+			),
+		}
+
+	@frappe.whitelist()
+	def sync_models(self):
+		"""Reload the model catalogue from Cloudflare, and say which Flow Models it flags."""
+		self._require_cloudflare()
+		try:
+			entries = cloudflare.sync_catalogue(self)
+		except cloudflare.CatalogueError as e:
+			throw(str(e), title=_("Sync Failed"))
+
+		notices = []
+		models = frappe.get_all(
+			"Flow Model",
+			filters={"enabled": 1, "model_id": ("like", f"{cloudflare.PROVIDER}/%")},
+			fields=["name", "model_id"],
+		)
+		for model in models:
+			entry = cloudflare.catalogue_entry(model.model_id, fetch=False)
+			notice = cloudflare.deprecation_notice(entry, entries) if entry else None
+			if notice:
+				notices.append(f"{model.name}: {notice}")
+		return {
+			"ok": True,
+			"count": len(entries),
+			"message": _("Synced {0} models.").format(len(entries)),
+			"warnings": notices,
+		}
