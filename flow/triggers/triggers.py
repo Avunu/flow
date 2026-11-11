@@ -6,12 +6,15 @@ from __future__ import annotations
 from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import frappe
 
 if TYPE_CHECKING:
 	from frappe.model.document import Document
+
+	from flow.flow.doctype.flow_agent.flow_agent import FlowAgent
+	from flow.flow.doctype.flow_trigger.flow_trigger import FlowTrigger
 
 DOC_EVENTS = frozenset({"after_insert", "on_update", "on_submit", "on_cancel", "on_trash"})
 
@@ -121,7 +124,7 @@ def fire(
 	target_name: str | None = None,
 ) -> str | None:
 	"""Worker: render the prompt and run the agent. Returns the Flow Run name, or None if skipped."""
-	t = frappe.get_doc("Flow Trigger", trigger)
+	t = cast("FlowTrigger", frappe.get_doc("Flow Trigger", trigger))
 	if not t.enabled:
 		return None
 
@@ -141,7 +144,7 @@ def fire(
 		# renders in frappe's sandboxed environment too.
 		# nosemgrep: frappe-ssti -- System Manager-authored template, sandboxed Jinja
 		prompt = frappe.render_template(t.prompt_template, {"doc": doc, "now": frappe.utils.now_datetime()})
-		agent_doc = frappe.get_doc("Flow Agent", t.agent)
+		agent_doc = cast("FlowAgent", frappe.get_doc("Flow Agent", t.agent))
 		run = agent_doc.run(
 			prompt,
 			source="Trigger",

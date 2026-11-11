@@ -4,7 +4,8 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from itertools import batched
+from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 import frappe
 from frappe import _
@@ -13,8 +14,11 @@ from frappe.model.document import Document
 if TYPE_CHECKING:
 	from collections.abc import Generator
 
-	from flow.flow.doctype.flow_run.flow_run import FlowRun
-	from flow.lib.agent import Event
+	from flow.flow.doctype.flow_knowledge_settings.flow_knowledge_settings import FlowKnowledgeSettings
+	from flow.flow.doctype.flow_run.flow_run import FlowRun, StreamEvent
+	from flow.flow.doctype.flow_session_attachment.flow_session_attachment import FlowSessionAttachment
+	from flow.flow.doctype.flow_session_message.flow_session_message import FlowSessionMessage
+	from flow.lib.agent import Agent
 
 TITLE_MAX_LENGTH = 80
 # A "Running" run older than this is treated as abandoned and no longer blocks the session.
@@ -77,13 +81,17 @@ class FlowSession(Document):
 		title: DF.Data | None
 	# end: auto-generated types
 
+	# The agent and its config snapshot, attached by flow.lib.session when a session is created or loaded.
+	_runtime: Agent
+	_snapshot: dict[str, Any]
+
 	def validate(self):
 		self._validate_agent_unchanged()
 		self._validate_model_enabled()
 
 	def on_trash(self):
 		frappe.db.delete("Flow Run", {"session": self.name})
-		_purge_attachment_chunks(self.name)
+		_purge_attachment_chunks(str(self.name))
 
 	def _validate_model_enabled(self):
 		if not self.model:
@@ -111,7 +119,7 @@ class FlowSession(Document):
 		Age is last activity (modified), so an actively-used session is never purged."""
 		cutoff = frappe.utils.add_days(frappe.utils.now(), -days)
 		sessions = frappe.get_all("Flow Session", filters={"modified": ["<", cutoff]}, pluck="name")
-		for batch in frappe.utils.create_batch(sessions, 100):
+		for batch in map(list, batched(sessions, 100, strict=False)):
 			frappe.db.delete("Flow Run", {"session": ["in", batch]})
 			frappe.db.delete("Flow Session Message", {"parent": ["in", batch]})
 			_delete_attachment_files(batch)
@@ -144,6 +152,34 @@ class FlowSession(Document):
 			)
 		self.save(ignore_permissions=True)
 
+	@overload
+	def chat(
+		self,
+		input: str,
+		*,
+		attachments: list[str] | None = None,
+		source: str = "Manual",
+		trigger: str | None = None,
+		reference_doctype: str | None = None,
+		reference_name: str | None = None,
+		auto_approve: bool = False,
+		stream: Literal[False] = False,
+	) -> FlowRun: ...
+
+	@overload
+	def chat(
+		self,
+		input: str,
+		*,
+		attachments: list[str] | None = None,
+		source: str = "Manual",
+		trigger: str | None = None,
+		reference_doctype: str | None = None,
+		reference_name: str | None = None,
+		auto_approve: bool = False,
+		stream: Literal[True],
+	) -> Generator[StreamEvent]: ...
+
 	def chat(
 		self,
 		input: str,
@@ -155,7 +191,7 @@ class FlowSession(Document):
 		reference_name: str | None = None,
 		auto_approve: bool = False,
 		stream: bool = False,
-	) -> FlowRun | Generator[Event]:
+	) -> FlowRun | Generator[StreamEvent]:
 		"""Run one turn and persist it as a Flow Run. `attachments` are File names whose text
 		is injected into this turn's prompt. With `stream=True`, returns an event generator.
 
@@ -173,14 +209,15 @@ class FlowSession(Document):
 		run = create_run(
 			source=source,
 			input=input,
-			session=self.name,
+			session=str(self.name),
 			trigger=trigger,
 			reference_doctype=reference_doctype,
 			reference_name=reference_name,
 			config_snapshot=self._snapshot,
 		)
-		self._persist_turn(input, attachment_data, run.name)
-		self._index_retrieval_attachments(run.name, {d["file"]: d["extracted_text"] for d in attachment_data})
+		run_name = str(run.name)
+		self._persist_turn(input, attachment_data, run_name)
+		self._index_retrieval_attachments(run_name, {d["file"]: d["extracted_text"] for d in attachment_data})
 		run_input = self._build_prompt_messages()
 
 		# Release row locks and publish the Running run before the long model call, so a
@@ -281,11 +318,11 @@ class FlowSession(Document):
 		from flow.knowledge.embedder import embed_texts
 
 		texts = texts or {}
-		settings = frappe.get_cached_doc("Flow Knowledge Settings")
+		settings = cast("FlowKnowledgeSettings", frappe.get_cached_doc("Flow Knowledge Settings"))
 		for row in rows:
 			try:
 				chunks = chunk_text(
-					texts.get(row.file) or row.extracted_text,
+					texts.get(row.file) or row.extracted_text or "",
 					chunk_size=cint(settings.chunk_size),
 					overlap=cint(settings.chunk_overlap),
 				)
@@ -294,12 +331,18 @@ class FlowSession(Document):
 					continue
 				vectors = embed_texts(chunks)
 				attachment_store.ensure_table(cint(settings.embedding_dimension))
-				attachment_store.add(self.name, row.name, chunks, vectors)
+				attachment_store.add(str(self.name), str(row.name), chunks, vectors)
 			except Exception:
 				frappe.log_error(title="Chat attachment indexing failed")
 				row.db_set("mode", "Inline")
 
-	def resume(self, answers: dict[str, Any], *, stream: bool = False) -> FlowRun | Generator[Event]:
+	@overload
+	def resume(self, answers: dict[str, Any], *, stream: Literal[False] = False) -> FlowRun: ...
+
+	@overload
+	def resume(self, answers: dict[str, Any], *, stream: Literal[True]) -> Generator[StreamEvent]: ...
+
+	def resume(self, answers: dict[str, Any], *, stream: bool = False) -> FlowRun | Generator[StreamEvent]:
 		"""Resume this session's paused run with the user's answers."""
 		from flow.flow.doctype.flow_run.flow_run import stream_with_persistence
 
@@ -311,7 +354,7 @@ class FlowSession(Document):
 		)
 		if not run_name:
 			frappe.throw(_("This session has no paused run to resume."), title=_("Nothing to Resume"))
-		run = frappe.get_doc("Flow Run", run_name)
+		run = cast("FlowRun", frappe.get_doc("Flow Run", run_name))
 
 		self.reload()
 		messages = self._build_prompt_messages()
@@ -362,7 +405,7 @@ class FlowSession(Document):
 				if retrieval:
 					content = _note_retrieval_files(content, retrieval)
 				if query and row.run == last_user_run:
-					chunks = retrieve_attachments(query, session=self.name, limit=RETRIEVAL_TOP_K)
+					chunks = retrieve_attachments(query, session=str(self.name), limit=RETRIEVAL_TOP_K)
 					content, budget = _inject_retrieved_chunks(content, chunks, budget)
 				message["content"] = content
 			messages.append(message)
@@ -387,8 +430,8 @@ class FlowSession(Document):
 				return row.content or ""
 		return ""
 
-	def _group_attachments_by_run(self) -> dict[str, list[Any]]:
-		grouped: dict[str, list[Any]] = {}
+	def _group_attachments_by_run(self) -> dict[str | None, list[FlowSessionAttachment]]:
+		grouped: dict[str | None, list[FlowSessionAttachment]] = {}
 		for attachment in self.attachments:
 			grouped.setdefault(attachment.run, []).append(attachment)
 		return grouped
@@ -460,7 +503,7 @@ def _route_attachment(text: str | None, threshold: int, embeddings_on: bool) -> 
 	return "Retrieval" if embeddings_on else "Inline"
 
 
-def _row_to_message(row) -> dict[str, Any]:
+def _row_to_message(row: FlowSessionMessage) -> dict[str, Any]:
 	"""Convert a stored transcript row to an OpenAI-format message dict."""
 	if row.role == "tool":
 		return {"role": "tool", "tool_call_id": row.tool_call_id, "content": row.content or ""}
@@ -470,7 +513,9 @@ def _row_to_message(row) -> dict[str, Any]:
 	return message
 
 
-def _inject_inline_files(content: str | None, attachments: list[Any], budget: int) -> tuple[str, int]:
+def _inject_inline_files(
+	content: str | None, attachments: list[FlowSessionAttachment], budget: int
+) -> tuple[str, int]:
 	"""Append inline files' full text to a user message, clamped to the shared `budget`.
 	Returns the augmented content and the remaining budget."""
 	blocks = []
@@ -483,10 +528,10 @@ def _inject_inline_files(content: str | None, attachments: list[Any], budget: in
 	return (f"{content}\n\n{body}" if content else body), budget
 
 
-def _note_retrieval_files(content: str | None, attachments: list[Any]) -> str:
+def _note_retrieval_files(content: str | None, attachments: list[FlowSessionAttachment]) -> str:
 	"""Mark where large (retrieval-mode) files were attached, without their bulk. Their
 	relevant excerpts are injected on the latest turn rather than inline here."""
-	names = ", ".join(a.file_name for a in attachments)
+	names = ", ".join(a.file_name or "" for a in attachments)
 	note = _("The user attached file(s) (large; relevant excerpts shown below): {0}").format(names)
 	return f"{content}\n\n{note}" if content else note
 
@@ -517,7 +562,7 @@ def _clamp(text: str, limit: int) -> tuple[str, bool]:
 	return text[:limit], True
 
 
-def derive_title(text: str) -> str:
+def derive_title(text: str | None) -> str:
 	"""Pick a short title from a user message. Single line, capped at TITLE_MAX_LENGTH."""
 	cleaned = " ".join((text or "").split())
 	if len(cleaned) <= TITLE_MAX_LENGTH:

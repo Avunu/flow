@@ -7,7 +7,7 @@ import json
 from collections.abc import Callable, Generator
 from dataclasses import asdict, dataclass
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import frappe
 from frappe import _
@@ -15,6 +15,7 @@ from frappe.database.utils import commit_after_response
 from frappe.model.document import Document
 
 if TYPE_CHECKING:
+	from flow.flow.doctype.flow_session.flow_session import FlowSession
 	from flow.lib.agent import Event, RunResult
 
 JSON_FIELDS = ("tool_calls", "questions", "usage", "config_snapshot")
@@ -33,6 +34,9 @@ class Error:
 	"""Streaming event: an exception ended the stream; the message has been persisted as the run error."""
 
 	message: str
+
+
+type StreamEvent = Event | RunStarted | Error
 
 
 class FlowRun(Document):
@@ -108,8 +112,8 @@ class FlowRun(Document):
 
 		new_messages = _new_messages_for_session(self.session, result.messages)
 		if new_messages:
-			session = frappe.get_doc("Flow Session", self.session)
-			session.append_run_messages(new_messages, run=self.name)
+			session = cast("FlowSession", frappe.get_doc("Flow Session", self.session))
+			session.append_run_messages(new_messages, run=str(self.name))
 
 	def mark_failed(self, error: str) -> None:
 		"""Mark a run as failed with the given error message."""
@@ -130,19 +134,23 @@ def create_run(
 ) -> FlowRun:
 	"""Create a new Flow Run row in the Running state. `session` is required — every run
 	belongs to a Flow Session (which carries the transcript and agent linkage)."""
-	doc = frappe.get_doc(
-		{
-			"doctype": "Flow Run",
-			"source": source,
-			"input": input,
-			"trigger": trigger,
-			"reference_doctype": reference_doctype,
-			"reference_name": reference_name,
-			"session": session,
-			"config_snapshot": _dump_json(config_snapshot) if config_snapshot else None,
-			"status": "Running",
-		}
-	).insert(ignore_permissions=True)
+	doc = cast(
+		"FlowRun",
+		frappe.get_doc(
+			{
+				"doctype": "Flow Run",
+				"source": source,
+				"input": input,
+				"trigger": trigger,
+				"reference_doctype": reference_doctype,
+				"reference_name": reference_name,
+				"session": session,
+				"config_snapshot": _dump_json(config_snapshot) if config_snapshot else None,
+				"status": "Running",
+			}
+		),
+	)
+	doc.insert(ignore_permissions=True)
 	return doc
 
 
@@ -174,7 +182,7 @@ def persist_result(
 def stream_with_persistence(
 	make_events: Callable[[], Generator[Event]],
 	run: FlowRun,
-) -> Generator[Event | RunStarted | Error]:
+) -> Generator[StreamEvent]:
 	"""Wrap an agent event stream with run lifecycle: announce RunStarted, persist on
 	Done, mark Failed + emit Error if the stream raises.
 
@@ -189,7 +197,7 @@ def stream_with_persistence(
 	final_result: RunResult | None = None
 	failure: str | None = None
 
-	yield RunStarted(name=run.name, session=run.session)
+	yield RunStarted(name=str(run.name), session=run.session)
 	try:
 		for event in make_events():
 			if isinstance(event, Done):
@@ -222,7 +230,7 @@ def _settle_run(run: FlowRun, result: RunResult | None, failure: str | None) -> 
 	run.mark_failed(failure or "Stream interrupted")
 
 
-def _status_from_result(result: RunResult) -> str:
+def _status_from_result(result: RunResult) -> Literal["Paused", "Completed"]:
 	if result.paused:
 		return "Paused"
 	return "Completed"

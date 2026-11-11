@@ -9,10 +9,17 @@ falling back to the central Flow Provider store.
 
 from __future__ import annotations
 
-from typing import Any
+import inspect
+from typing import TYPE_CHECKING, Any, cast
 
 import frappe
 from frappe import _
+
+from flow.utils.errors import throw
+
+if TYPE_CHECKING:
+	from flow.flow.doctype.flow_knowledge_settings.flow_knowledge_settings import FlowKnowledgeSettings
+	from flow.flow.doctype.flow_model.flow_model import FlowModel
 
 BATCH_SIZE = 96  # smallest common provider batch limit (Cohere)
 EMBED_TIMEOUT = 120
@@ -22,7 +29,7 @@ PROBE_TIMEOUT = 30
 def _model_config(model: str) -> dict[str, Any]:
 	from flow.lib.model import resolve_provider_credentials
 
-	doc = frappe.get_doc("Flow Model", model)
+	doc = cast("FlowModel", frappe.get_doc("Flow Model", model))
 	if not doc.enabled:
 		frappe.throw(_("Flow Model {0} is disabled.").format(model), title=_("Model Disabled"))
 
@@ -38,9 +45,9 @@ def _model_config(model: str) -> dict[str, Any]:
 
 
 def _embedding_config() -> dict[str, Any]:
-	settings = frappe.get_cached_doc("Flow Knowledge Settings")
+	settings = cast("FlowKnowledgeSettings", frappe.get_cached_doc("Flow Knowledge Settings"))
 	if not settings.embedding_model:
-		frappe.throw(
+		throw(
 			_("Set an embedding model in Flow Knowledge Settings first."),
 			title=_("Knowledge Not Configured"),
 		)
@@ -57,7 +64,10 @@ def _embed_batch(texts: list[str], config: dict[str, Any], *, timeout: int) -> l
 	try:
 		response = litellm.embedding(input=texts, timeout=timeout, **config)
 	except Exception as e:
-		frappe.throw(str(e)[:500] or type(e).__name__, title=_("Embedding Failed"))
+		throw(str(e)[:500] or type(e).__name__, title=_("Embedding Failed"))
+	# litellm.embedding answers a coroutine only for aembedding=True, which this never passes.
+	if inspect.isawaitable(response):
+		throw(_("Embedding provider returned an unexpected response."), title=_("Embedding Failed"))
 
 	entries = sorted(response.data, key=lambda entry: _get(entry, "index") or 0)
 	vectors = [[float(value) for value in _get(entry, "embedding")] for entry in entries]

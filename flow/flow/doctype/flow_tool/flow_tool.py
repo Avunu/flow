@@ -10,6 +10,7 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
+from flow.utils.errors import throw
 from flow.utils.system_generated import block_delete, block_rename, validate_immutable
 
 SLUG_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -76,7 +77,7 @@ class FlowTool(Document):
 	def _validate_type_fields(self):
 		if self.type == "Imported":
 			if not self.import_path:
-				frappe.throw(_("Import Path is required for Imported tools."), title=_("Missing Import Path"))
+				throw(_("Import Path is required for Imported tools."), title=_("Missing Import Path"))
 			if not IMPORT_PATH_PATTERN.match(self.import_path):
 				frappe.throw(
 					_(
@@ -99,9 +100,9 @@ class FlowTool(Document):
 
 	def _validate_code(self):
 		try:
-			tree = ast.parse(self.code, filename=f"<ai_tool:{self.slug}>")
+			tree = ast.parse(self.code or "", filename=f"<ai_tool:{self.slug}>")
 		except SyntaxError as e:
-			frappe.throw(
+			throw(
 				_("Code has invalid Python syntax: {0}").format(str(e)),
 				title=_("Invalid Code"),
 			)
@@ -113,7 +114,7 @@ class FlowTool(Document):
 				break
 
 		if main_function is None:
-			frappe.throw(
+			throw(
 				_("Code must define a top-level <code>main</code> function."),
 				title=_("Missing main()"),
 			)

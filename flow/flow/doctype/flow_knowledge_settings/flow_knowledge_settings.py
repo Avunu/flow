@@ -1,6 +1,8 @@
 # Copyright (c) 2026, Frappe Technologies and contributors
 # License: MIT. See LICENSE
 
+from typing import cast
+
 import frappe
 from frappe import _
 from frappe.model.document import Document
@@ -68,7 +70,7 @@ class FlowKnowledgeSettings(Document):
 
 def require_embedding_model():
 	"""Knowledge ingestion needs an embedding model; block creating knowledge docs until one is set."""
-	settings = frappe.get_cached_doc("Flow Knowledge Settings")
+	settings = cast("FlowKnowledgeSettings", frappe.get_cached_doc("Flow Knowledge Settings"))
 	if not settings.embedding_model:
 		frappe.throw(
 			_("Set an embedding model in Flow Knowledge Settings before adding knowledge bases or sources."),

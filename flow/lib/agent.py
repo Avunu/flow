@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 from collections.abc import Generator
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 from frappe import _
 
@@ -339,6 +339,12 @@ class Agent:
 		_validate_messages(input)
 		return list(input)
 
+	@overload
+	def run(self, input: str | list[dict[str, Any]], *, stream: Literal[False] = False) -> RunResult: ...
+
+	@overload
+	def run(self, input: str | list[dict[str, Any]], *, stream: Literal[True]) -> Generator[Event]: ...
+
 	def run(self, input: str | list[dict[str, Any]], *, stream: bool = False) -> RunResult | Generator[Event]:
 		"""Run the agent on `input`. With `stream=True`, returns a generator of `Event`s
 		(text deltas, tool start/end markers, and a final `Done` carrying the `RunResult`)."""
@@ -430,6 +436,24 @@ class Agent:
 			yield Done(result=self._stopped_result(messages))
 			return
 		yield from self._loop_stream(messages, self._answered_calls(messages))
+
+	@overload
+	def resume(
+		self,
+		messages: list[dict[str, Any]],
+		answers: dict[str, Any],
+		*,
+		stream: Literal[False] = False,
+	) -> RunResult: ...
+
+	@overload
+	def resume(
+		self,
+		messages: list[dict[str, Any]],
+		answers: dict[str, Any],
+		*,
+		stream: Literal[True],
+	) -> Generator[Event]: ...
 
 	def resume(
 		self,

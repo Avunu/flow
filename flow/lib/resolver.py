@@ -12,6 +12,7 @@ from frappe import _
 from frappe.utils.safe_exec import safe_exec
 
 from flow.lib.tool import Tool, build_schema
+from flow.utils.errors import throw
 
 if TYPE_CHECKING:
 	from flow.flow.doctype.flow_tool.flow_tool import FlowTool
@@ -45,11 +46,12 @@ def _build_tool(doc: FlowTool, parameters: dict[str, Any], func: Any, *, confirm
 
 
 def _resolve_module(doc: FlowTool) -> Tool:
+	import_path = doc.import_path or ""
 	try:
-		obj = frappe.get_attr(doc.import_path)
+		obj = frappe.get_attr(import_path)
 	except Exception as e:
-		frappe.throw(
-			_("Could not import tool from {0}: {1}").format(doc.import_path, str(e)),
+		throw(
+			_("Could not import tool from {0}: {1}").format(import_path, str(e)),
 			title=_("Tool Import Failed"),
 		)
 
@@ -57,8 +59,8 @@ def _resolve_module(doc: FlowTool) -> Tool:
 		return _build_tool(doc, obj.parameters, obj.func, confirm_prompt=obj.confirm_prompt)
 	if callable(obj):
 		return _build_tool(doc, build_schema(obj), obj)
-	frappe.throw(
-		_("Import path {0} is not a Tool or callable.").format(doc.import_path),
+	throw(
+		_("Import path {0} is not a Tool or callable.").format(import_path),
 		title=_("Invalid Tool"),
 	)
 
@@ -96,7 +98,7 @@ def _find_main(tree: ast.Module) -> ast.FunctionDef:
 	for node in tree.body:
 		if isinstance(node, ast.FunctionDef) and node.name == MAIN_FUNCTION_NAME:
 			return node
-	frappe.throw(_("Code must define a top-level <code>main</code> function."), title=_("Missing main()"))
+	throw(_("Code must define a top-level <code>main</code> function."), title=_("Missing main()"))
 
 
 def _required_arg_names(signature: ast.arguments) -> set[str]:
@@ -161,8 +163,9 @@ def schema_from_code(code: str) -> dict[str, Any]:
 
 
 def _resolve_script(doc: FlowTool, *, restrict_commit_rollback: bool = False) -> Tool:
-	runner = _make_script_runner(doc.code, doc.slug, restrict_commit_rollback=restrict_commit_rollback)
-	return _build_tool(doc, schema_from_code(doc.code), runner)
+	code = doc.code or ""
+	runner = _make_script_runner(code, doc.slug, restrict_commit_rollback=restrict_commit_rollback)
+	return _build_tool(doc, schema_from_code(code), runner)
 
 
 def resolve_tool(doc: FlowTool, *, restrict_commit_rollback: bool = False) -> Tool:

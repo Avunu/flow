@@ -10,6 +10,7 @@ import frappe
 from frappe import _
 
 from flow.lib.tool import Tool, tool
+from flow.utils.errors import throw
 from flow.utils.safe_exec import safe_exec
 
 MAX_READ_LIMIT = 200
@@ -19,7 +20,7 @@ _ERROR_LIMIT = 300
 _LIFECYCLE_BY_DOCSTATUS = {0: "submit", 1: "cancel", 2: "amend"}
 
 
-def _summarize_values(values: dict) -> str:
+def _summarize_values(values: dict | None) -> str:
 	"""Truncate long values for confirm prompts — keeps the display scannable."""
 	display = {}
 	for k, v in (values or {}).items():
@@ -82,7 +83,7 @@ def _whitelisted_methods(doctype: str) -> list[str]:
 
 def _doc_actions(doc: Any, meta: Any) -> dict[str, Any]:
 	"""Actions the current user can run on this record: lifecycle, workflow, methods."""
-	lifecycle: list[str] = []
+	lifecycle: list[str | None] = []
 	if getattr(meta, "is_submittable", 0):
 		lifecycle.append(_LIFECYCLE_BY_DOCSTATUS.get(int(doc.docstatus)))
 	if int(doc.docstatus) != 1 and frappe.has_permission(doc.doctype, "delete", doc.name):
@@ -235,7 +236,7 @@ def bind_update_memory(agent: str | None) -> Tool:
 		from flow.memory.memory import save_memory
 
 		if not agent:
-			frappe.throw(_("Memory is not configured for this agent."), title=_("Memory Unavailable"))
+			throw(_("Memory is not configured for this agent."), title=_("Memory Unavailable"))
 		return save_memory(agent, content=content, scope=scope, memory_id=memory_id, keywords=keywords)
 
 	return tool(update_memory, description=_UPDATE_MEMORY_DESCRIPTION)
@@ -325,7 +326,7 @@ def _apply_action(doctype: str, name: str, action: str, args: dict[str, Any]) ->
 		return {"name": doc.name, "docstatus": int(doc.docstatus)}
 	if action == "amend":
 		amended = frappe.copy_doc(doc)
-		amended.amended_from = doc.name
+		amended.set("amended_from", doc.name)
 		amended.insert()
 		return {"name": amended.name}
 	if action in _workflow_actions(doc):
@@ -358,7 +359,7 @@ def create(doctype: str, records: list[dict[str, Any]]) -> dict[str, Any]:
 			doc = frappe.new_doc(doctype)
 			doc.update(values or {})
 			doc.insert()
-			created.append(doc.name)
+			created.append(str(doc.name))
 		except Exception as e:
 			failures.append({"row": row, "error": _error_text(e)})
 
@@ -388,7 +389,7 @@ def update(doctype: str, names: list[str], values: dict[str, Any]) -> dict[str, 
 			doc = frappe.get_doc(doctype, name)
 			doc.update(values or {})
 			doc.save()
-			updated.append(doc.name)
+			updated.append(str(doc.name))
 		except Exception as e:
 			failures.append({"name": name, "error": _error_text(e)})
 

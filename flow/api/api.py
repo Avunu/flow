@@ -6,18 +6,19 @@ from __future__ import annotations
 import json
 from collections.abc import Generator, Iterable
 from dataclasses import asdict, is_dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import frappe
 from frappe import _
 from werkzeug.wrappers import Response
 
 if TYPE_CHECKING:
-	from flow.flow.doctype.flow_run.flow_run import FlowRun
-	from flow.lib.agent import Event
+	from flow.flow.doctype.flow_agent.flow_agent import FlowAgent
+	from flow.flow.doctype.flow_run.flow_run import FlowRun, StreamEvent
+	from flow.flow.doctype.flow_session.flow_session import FlowSession
 
 
-def _event_to_dict(event: Event) -> dict[str, Any]:
+def _event_to_dict(event: StreamEvent) -> dict[str, Any]:
 	from flow.flow.doctype.flow_run.flow_run import Error, RunStarted
 	from flow.lib.agent import Done, TextChunk, ToolEnded, ToolStarted
 
@@ -48,12 +49,12 @@ def _event_to_dict(event: Event) -> dict[str, Any]:
 	raise TypeError(f"Unknown event type: {type(event).__name__}")
 
 
-def _format_sse(event: Event) -> bytes:
+def _format_sse(event: StreamEvent) -> bytes:
 	payload = _event_to_dict(event)
 	return f"event: {payload['type']}\ndata: {json.dumps(payload, default=str)}\n\n".encode()
 
 
-def _sse_response(events: Iterable[Event]) -> Response:
+def _sse_response(events: Iterable[StreamEvent]) -> Response:
 	"""Wrap an event iterable as an SSE HTTP response."""
 
 	def body() -> Generator[bytes]:
@@ -131,8 +132,9 @@ def start_run(
 	stream = _is_truthy(stream)
 	files = _parse_attachments(attachments)
 	convo = load_session(session, agent=agent, model=model) if session else new_session(agent, model=model)
-	out = convo.chat(input, attachments=files, stream=stream)
-	return _sse_response(out) if stream else _summarize(out)
+	if stream:
+		return _sse_response(convo.chat(input, attachments=files, stream=True))
+	return _summarize(convo.chat(input, attachments=files))
 
 
 def _parse_answers(answers: Any) -> dict[str, Any]:
@@ -156,7 +158,7 @@ def resume_run(
 	parsed_answers = _parse_answers(answers)
 	stream = _is_truthy(stream)
 
-	run = frappe.get_doc("Flow Run", run_name)
+	run = cast("FlowRun", frappe.get_doc("Flow Run", run_name))
 	assert_run_owner(run)
 	if run.status != "Paused":
 		frappe.throw(
@@ -164,8 +166,10 @@ def resume_run(
 			title=_("Cannot Resume"),
 		)
 
-	out = load_session(run.session).resume(parsed_answers, stream=stream)
-	return _sse_response(out) if stream else _summarize(out)
+	convo = load_session(run.session)
+	if stream:
+		return _sse_response(convo.resume(parsed_answers, stream=True))
+	return _summarize(convo.resume(parsed_answers))
 
 
 @frappe.whitelist()
@@ -177,7 +181,7 @@ def stop_run(run_name: str) -> dict[str, str]:
 	if not isinstance(run_name, str) or not run_name.strip():
 		frappe.throw(_("Run is required."), title=_("Invalid Run"))
 
-	run = frappe.get_doc("Flow Run", run_name.strip())
+	run = cast("FlowRun", frappe.get_doc("Flow Run", run_name.strip()))
 	assert_run_owner(run)
 	if run.status not in ("Completed", "Failed"):
 		run.mark_failed("Stopped by user.")
@@ -194,7 +198,7 @@ def recover_session(session: str) -> dict[str, int]:
 
 	from flow.lib.session import _assert_session_owner
 
-	doc = frappe.get_doc("Flow Session", session.strip())
+	doc = cast("FlowSession", frappe.get_doc("Flow Session", session.strip()))
 	_assert_session_owner(doc)
 
 	abandoned = frappe.get_all("Flow Run", filters={"session": doc.name, "status": "Running"}, pluck="name")
@@ -229,7 +233,7 @@ def submit_feedback(run_name: str, rating: str, comment: str | None = None) -> d
 			title=_("Feedback Too Long"),
 		)
 
-	run = frappe.get_doc("Flow Run", run_name.strip())
+	run = cast("FlowRun", frappe.get_doc("Flow Run", run_name.strip()))
 	assert_run_owner(run)
 	if run.status not in ("Completed", "Failed"):
 		frappe.throw(
@@ -257,7 +261,7 @@ def get_agent_tools(agent: str) -> dict[str, bool]:
 	if not isinstance(agent, str) or not agent.strip():
 		return {}
 
-	doc = frappe.get_doc("Flow Agent", agent.strip())
+	doc = cast("FlowAgent", frappe.get_doc("Flow Agent", agent.strip()))
 	frappe.has_permission("Flow Agent", "read", doc.name, throw=True)
 
 	tool_names = [row.tool for row in doc.tools]

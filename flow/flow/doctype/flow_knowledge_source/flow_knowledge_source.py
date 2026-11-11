@@ -77,13 +77,13 @@ class FlowKnowledgeSource(Document):
 			return
 		from flow.knowledge.ingest import enqueue_ingestion
 
-		enqueue_ingestion(self.name)
+		enqueue_ingestion(str(self.name))
 
 	def on_trash(self):
 		block_delete(self)
 		from flow.knowledge.ingest import purge_source
 
-		purge_source(self.name)
+		purge_source(str(self.name))
 
 	@frappe.whitelist()
 	def resync(self, rebuild: bool = False):
@@ -92,10 +92,10 @@ class FlowKnowledgeSource(Document):
 		from flow.knowledge.ingest import enqueue_ingestion
 
 		self.db_set("status", "Pending", update_modified=False)
-		enqueue_ingestion(self.name, rebuild=bool(rebuild))
+		enqueue_ingestion(str(self.name), rebuild=bool(rebuild))
 
 	@frappe.whitelist()
 	def reconcile(self):
 		from flow.knowledge.ingest import enqueue_reconciliation
 
-		enqueue_reconciliation(self.name)
+		enqueue_reconciliation(str(self.name))

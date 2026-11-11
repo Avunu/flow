@@ -3,7 +3,12 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, cast
+
 import frappe
+
+if TYPE_CHECKING:
+	from flow.flow.doctype.flow_agent.flow_agent import FlowAgent
 
 ASSISTANT_AGENT_TITLE = "Flow"
 ASSISTANT_MAX_ITERATIONS = 40
@@ -89,7 +94,7 @@ def sync_builtin_assistant(model: str | None = None) -> None:
 		).insert(ignore_permissions=True)
 		return
 
-	doc = frappe.get_doc("Flow Agent", ASSISTANT_AGENT_TITLE)
+	doc = cast("FlowAgent", frappe.get_doc("Flow Agent", ASSISTANT_AGENT_TITLE))
 	if not doc.is_system_generated:
 		return
 
