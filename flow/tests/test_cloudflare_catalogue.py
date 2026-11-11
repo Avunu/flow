@@ -287,12 +287,13 @@ class TestFetchingTheCatalogue(_CatalogueCase):
 		self.assertEqual(flash.supported_efforts, ("max", "high", "low"))
 
 	def test_a_server_that_ignores_page_cannot_loop_the_reader(self):
-		with patch.object(cloudflare, "MAX_PAGES", 20):
-			self.cloudflare.native = self.cloudflare.native[:PAGE_SIZE]
-			self.cloudflare.openrouter = self.cloudflare.openrouter[:PAGE_SIZE]
-			entries = cloudflare.fetch_catalogue(self.provider)
+		self.cloudflare.ignore_page = True
+
+		entries = cloudflare.fetch_catalogue(self.provider)
 
 		self.assertEqual(len(entries), PAGE_SIZE)
+		# One page, then a second that brought nothing new: for each of the two shapes.
+		self.assertEqual(len(self.searches()), 4)
 
 	def test_a_custom_endpoint_has_no_catalogue(self):
 		self.provider.base_url = "https://proxy.example.com/openai/v1"

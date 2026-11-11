@@ -90,6 +90,8 @@ class MockCloudflare:
 		self.openrouter = openrouter_models()
 		# Set to a status code to fail the next call with Cloudflare's error envelope.
 		self.fail_with: int | None = None
+		# Serve the first page whatever `page` says, as a server that ignores pagination would.
+		self.ignore_page = False
 		# Answer `format=openrouter` catalogue calls with an error, as an older API would.
 		self.no_openrouter = False
 		# Reject `stream_options`, as a model that doesn't accept it would.
@@ -113,7 +115,7 @@ class MockCloudflare:
 
 	def _catalogue(self, request: BaseHTTPRequestHandler, record: dict[str, Any]) -> None:
 		query = record["query"]
-		page = int(query.get("page", 1))
+		page = 1 if self.ignore_page else int(query.get("page", 1))
 		openrouter = query.get("format") == "openrouter"
 		if openrouter and self.no_openrouter:
 			return self._json(request, 400, _error(1001, "Unknown format"))
