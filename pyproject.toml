@@ -1,20 +1,18 @@
 [project]
 name = "flow"
-authors = [
-    { name = "Shrihari Mahabal", email = "shriharimahabal08@gmail.com"}
-]
+authors = [{ name = "Shrihari Mahabal", email = "shriharimahabal08@gmail.com" }]
 description = "Frappe Flow — native AI agents, tools, and triggers for Frappe"
-requires-python = ">=3.14,<3.15"
+requires-python = ">=3.14"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
 dynamic = ["version"]
 dependencies = [
-    "litellm>=1.83.0,<1.83.8",
-    "lancedb<1,>=0.33",
-    "python-docx<2,>=1.1",
-    "pdfplumber<1,>=0.11",
-    "rapidocr<4,>=3",
-    "onnxruntime<2,>=1.27",
+	"litellm>=1.83.0,<1.83.8",
+	"lancedb<1,>=0.33",
+	"python-docx<2,>=1.1",
+	"pdfplumber<1,>=0.11",
+	"rapidocr<4,>=3",
+	"onnxruntime<2,>=1.27",
 ]
 
 [build-system]
@@ -22,7 +20,7 @@ requires = ["flit_core >=3.4,<4"]
 build-backend = "flit_core.buildapi"
 
 [tool.bench.frappe-dependencies]
-frappe = ">=16.0.0-dev,<18.0.0"
+frappe = ">=16.0.0,<17.0.0"
 
 # These dependencies are only installed when developer mode is enabled
 [tool.bench.dev-dependencies]
@@ -37,40 +35,134 @@ line-length = 110
 target-version = "py314"
 
 [tool.ruff.lint]
-select = [
-    "F",
-    "E",
-    "W",
-    "I",
-    "UP",
-    "B",
-    "RUF",
-]
-ignore = [
-    "B017", # assertRaises(Exception) - should be more specific
-    "B018", # useless expression, not assigned to anything
-    "B023", # function doesn't bind loop variable - will have last iteration's value
-    "B904", # raise inside except without from
-    "E101", # indentation contains mixed spaces and tabs
-    "E402", # module level import not at top of file
-    "E501", # line too long
-    "E741", # ambiguous variable name
-    "F401", # "unused" imports
-    "F403", # can't detect undefined names from * import
-    "F405", # can't detect undefined names from * import
-    "F722", # syntax error in forward type annotation
-    "W191", # indentation contains tabs
-    "UP030", # Use implicit references for positional format fields (translations)
-    "UP031", # Use format specifiers instead of percent format
-    "UP032", # Use f-string instead of `format` call (translations)
-    "UP037", # quoted annotations
-    "UP040", # Use type aliases instead of type annotations
-    "UP006", # runtime typing.List/Dict introspection in tool schema builder, not annotations
-    "UP007", # runtime typing.Union introspection in tool schema builder, not annotations
-]
+select = ["F", "E", "W", "I", "UP", "B", "RUF", "SIM", "C4", "PIE", "PERF", "T20"]
+ignore = ["E501", "W191"]
 typing-modules = ["frappe.types.DF"]
+
+[tool.ruff.lint.per-file-ignores]
+# E101 also reads the indentation inside multi-line string literals. These two hold a docstring and a
+# tool description whose text mixes spaces into the tab-indented block; changing it would change the text.
+"flow/tools/builtins.py" = ["E101"]
+"flow/flow/doctype/flow_session/flow_session.py" = ["E101"]
 
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "tab"
 docstring-code-format = true
+
+[tool.frappe-nix]
+schema = 1
+profile = "github:Avunu/frappe-standards-profile/main"
+frappe-major = 16
+
+# The licence is the AGPL the repository already carries (license.txt), not the profile's MIT.
+[tool.frappe-nix.org]
+license = "AGPL-3.0-or-later"
+
+# A placeholder until the framework ships its own AI support: never listed, so the Marketplace,
+# README, icon, screenshot and demo modules are off.
+[tool.frappe-nix.listing]
+enable = false
+
+[tool.frappe-nix.readme]
+enable = false
+
+[tool.frappe-nix.icons]
+enable = false
+
+[tool.frappe-nix.screenshots]
+enable = false
+
+[tool.frappe-nix.demo]
+enable = false
+
+# Temporary, removed in PR B: the lint gate's scan of frappe's semgrep rules reports 29 findings and
+# the test-correctness scan 4 (assertRaises(Exception)); neither has a baseline yet.
+[tool.frappe-nix.semgrep]
+frappe-rules = false
+test-correctness = false
+
+# Temporary, removed in PR B: ty reports 696 diagnostics (157 in the app, 539 in the tests, mostly
+# frappe.get_doc returning a generic Document), so its stage in frappe-test is off until they are fixed.
+[tool.frappe-nix.python-types]
+enable = false
+
+[tool.coverage.run]
+omit = ["*/tests/*", "*/test_*.py", "*/patches/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+precision = 1
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "@(abc\\.)?abstractmethod"]
+fail_under = 80
+
+[tool.vulture]
+exclude = [".venv/", "node_modules/", ".frappe-nix/", ".dev-dist/", ".devenv/", ".direnv/"]
+
+[tool.test_utils.static-analysis]
+whitelist = ["frappe.*"]
+
+# oxfmt reflows HTML, and these are Jinja templates whose rendered whitespace matters, so oxfmt
+# leaves them alone.
+[tool.frappe-nix.js.oxfmt]
+ignore = ["**/*.html"]
+
+# Findings in the existing Vue panel that have no safe autofix. Each is a small rewrite
+# (or a deliberate choice) left for a later change, so the rules are off for just that file.
+[[tool.frappe-nix.js.oxlint.overrides]]
+files = ["frontend/src/main.js"]
+rules = { "import/no-unassigned-import" = "off", "eslint/no-unused-expressions" = "off" }
+
+[[tool.frappe-nix.js.oxlint.overrides]]
+files = ["frontend/src/store.js"]
+rules = { "eslint/no-shadow" = "off", "unicorn/no-array-reverse" = "off", "oxc/no-map-spread" = "off" }
+
+[[tool.frappe-nix.js.oxlint.overrides]]
+files = ["frontend/src/components/MarkdownText.vue"]
+rules = { "unicorn/no-useless-spread" = "off" }
+
+[[tool.frappe-nix.js.oxlint.overrides]]
+files = ["frontend/src/api/stream.js"]
+rules = { "eslint/no-await-in-loop" = "off" }
+
+# Desk scripts that strict checkJs reports on today. Typing them (JSDoc) is the next PR's work, and
+# the list only shrinks from here.
+
+[[tool.frappe-nix.unchecked-js]]
+path = "flow/flow/doctype/flow_knowledge_source/flow_knowledge_source.js"
+reason = "Not yet typed with JSDoc; checkJs reports errors"
+
+[[tool.frappe-nix.unchecked-js]]
+path = "flow/flow/doctype/flow_model/flow_model.js"
+reason = "Not yet typed with JSDoc; checkJs reports errors"
+
+[[tool.frappe-nix.unchecked-js]]
+path = "flow/flow/doctype/flow_run/flow_run.js"
+reason = "Not yet typed with JSDoc; checkJs reports errors"
+
+[[tool.frappe-nix.unchecked-js]]
+path = "flow/flow/doctype/flow_session/flow_session.js"
+reason = "Not yet typed with JSDoc; checkJs reports errors"
+
+# Whitelisted methods with no test yet. Writing them is the next PR's work, and the list only shrinks.
+
+[[tool.frappe-nix.untested]]
+target = "flow.api.api.stop_run"
+reason = "Not yet tested; a test is the next PR's work"
+
+[[tool.frappe-nix.untested]]
+target = "flow.api.api.get_agent_tools"
+reason = "Not yet tested; a test is the next PR's work"
+
+[[tool.frappe-nix.untested]]
+target = "flow.flow.doctype.flow_knowledge_source.flow_knowledge_source.FlowKnowledgeSource.reconcile"
+reason = "Not yet tested; a test is the next PR's work"
+
+[[tool.frappe-nix.untested]]
+target = "flow.flow.doctype.flow_model.flow_model.FlowModel.test_connection"
+reason = "Not yet tested; a test is the next PR's work"
+
+[[tool.frappe-nix.untested]]
+target = "flow.flow.doctype.flow_model.flow_model.get_provider_models"
+reason = "Not yet tested; a test is the next PR's work"

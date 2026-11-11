@@ -17,6 +17,101 @@ if TYPE_CHECKING:
 	from flow.lib.agent import Event
 
 
+def _event_to_dict(event: Event) -> dict[str, Any]:
+	from flow.flow.doctype.flow_run.flow_run import Error, RunStarted
+	from flow.lib.agent import Done, TextChunk, ToolEnded, ToolStarted
+
+	if isinstance(event, TextChunk):
+		return {"type": "text", "delta": event.text}
+	if isinstance(event, ToolStarted):
+		return {"type": "tool_started", "id": event.id, "name": event.name, "arguments": event.arguments}
+	if isinstance(event, ToolEnded):
+		return {"type": "tool_ended", "id": event.id, "name": event.name, "result": event.result}
+	if isinstance(event, RunStarted):
+		return {"type": "run_started", "name": event.name, "session": event.session}
+	if isinstance(event, Error):
+		return {"type": "error", "message": event.message}
+	if isinstance(event, Done):
+		result = event.result
+		payload: dict[str, Any] = {
+			"type": "done",
+			"status": "Paused" if result.paused else "Completed",
+			"iterations": result.iterations,
+			"output": result.output,
+			"usage": result.usage,
+		}
+		if result.paused:
+			payload["questions"] = [asdict(q) for q in result.questions]
+		return payload
+	if is_dataclass(event):
+		return {"type": type(event).__name__.lower(), **asdict(event)}
+	raise TypeError(f"Unknown event type: {type(event).__name__}")
+
+
+def _format_sse(event: Event) -> bytes:
+	payload = _event_to_dict(event)
+	return f"event: {payload['type']}\ndata: {json.dumps(payload, default=str)}\n\n".encode()
+
+
+def _sse_response(events: Iterable[Event]) -> Response:
+	"""Wrap an event iterable as an SSE HTTP response."""
+
+	def body() -> Generator[bytes]:
+		for event in events:
+			yield _format_sse(event)
+
+	return Response(
+		body(),
+		mimetype="text/event-stream",
+		headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+	)
+
+
+def _is_truthy(value: Any) -> bool:
+	if isinstance(value, bool):
+		return value
+	if isinstance(value, int | float):
+		return bool(value)
+	if isinstance(value, str):
+		return value.strip().lower() in {"1", "true", "yes", "on"}
+	return bool(value)
+
+
+def _parse_attachments(value: Any) -> list[str]:
+	"""Normalize the attachments argument (a list, a JSON-array string, or empty) to file names."""
+	if not value:
+		return []
+	if isinstance(value, str):
+		try:
+			value = json.loads(value)
+		except TypeError, ValueError:
+			frappe.throw(_("Attachments must be a JSON array of file ids."), title=_("Invalid Attachments"))
+	if not isinstance(value, list):
+		frappe.throw(_("Attachments must be a list of file ids."), title=_("Invalid Attachments"))
+	files: list[str] = []
+	for file in value:
+		if not isinstance(file, str) or not file.strip():
+			frappe.throw(_("Each attachment must be a file id."), title=_("Invalid Attachments"))
+		files.append(file.strip())
+	return files
+
+
+def _summarize(run: FlowRun) -> dict[str, Any]:
+	payload: dict[str, Any] = {
+		"name": run.name,
+		"session": run.session,
+		"status": run.status,
+		"iterations": run.iterations,
+	}
+	if run.status == "Completed":
+		payload["output"] = run.output
+	elif run.status == "Paused":
+		payload["questions"] = json.loads(run.questions) if run.questions else []
+	elif run.status == "Failed":
+		payload["error"] = run.error
+	return payload
+
+
 @frappe.whitelist()
 def start_run(
 	input: str,
@@ -38,6 +133,17 @@ def start_run(
 	convo = load_session(session, agent=agent, model=model) if session else new_session(agent, model=model)
 	out = convo.chat(input, attachments=files, stream=stream)
 	return _sse_response(out) if stream else _summarize(out)
+
+
+def _parse_answers(answers: Any) -> dict[str, Any]:
+	if isinstance(answers, str):
+		try:
+			answers = json.loads(answers)
+		except TypeError, ValueError:
+			frappe.throw(_("Answers must be a JSON object."), title=_("Invalid Answers"))
+	if not isinstance(answers, dict):
+		frappe.throw(_("Answers must be a JSON object."), title=_("Invalid Answers"))
+	return answers
 
 
 @frappe.whitelist()
@@ -174,109 +280,3 @@ def attach_file(file: str) -> dict[str, Any]:
 	from flow.flow.doctype.flow_session_attachment.flow_session_attachment import stage_attachment
 
 	return stage_attachment(file.strip())
-
-
-def _sse_response(events: Iterable[Event]) -> Response:
-	"""Wrap an event iterable as an SSE HTTP response."""
-
-	def body() -> Generator[bytes]:
-		for event in events:
-			yield _format_sse(event)
-
-	return Response(
-		body(),
-		mimetype="text/event-stream",
-		headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-	)
-
-
-def _format_sse(event: Event) -> bytes:
-	payload = _event_to_dict(event)
-	return f"event: {payload['type']}\ndata: {json.dumps(payload, default=str)}\n\n".encode()
-
-
-def _event_to_dict(event: Event) -> dict[str, Any]:
-	from flow.flow.doctype.flow_run.flow_run import Error, RunStarted
-	from flow.lib.agent import Done, TextChunk, ToolEnded, ToolStarted
-
-	if isinstance(event, TextChunk):
-		return {"type": "text", "delta": event.text}
-	if isinstance(event, ToolStarted):
-		return {"type": "tool_started", "id": event.id, "name": event.name, "arguments": event.arguments}
-	if isinstance(event, ToolEnded):
-		return {"type": "tool_ended", "id": event.id, "name": event.name, "result": event.result}
-	if isinstance(event, RunStarted):
-		return {"type": "run_started", "name": event.name, "session": event.session}
-	if isinstance(event, Error):
-		return {"type": "error", "message": event.message}
-	if isinstance(event, Done):
-		result = event.result
-		payload: dict[str, Any] = {
-			"type": "done",
-			"status": "Paused" if result.paused else "Completed",
-			"iterations": result.iterations,
-			"output": result.output,
-			"usage": result.usage,
-		}
-		if result.paused:
-			payload["questions"] = [asdict(q) for q in result.questions]
-		return payload
-	if is_dataclass(event):
-		return {"type": type(event).__name__.lower(), **asdict(event)}
-	raise TypeError(f"Unknown event type: {type(event).__name__}")
-
-
-def _is_truthy(value: Any) -> bool:
-	if isinstance(value, bool):
-		return value
-	if isinstance(value, int | float):
-		return bool(value)
-	if isinstance(value, str):
-		return value.strip().lower() in {"1", "true", "yes", "on"}
-	return bool(value)
-
-
-def _parse_attachments(value: Any) -> list[str]:
-	"""Normalize the attachments argument (a list, a JSON-array string, or empty) to file names."""
-	if not value:
-		return []
-	if isinstance(value, str):
-		try:
-			value = json.loads(value)
-		except (TypeError, ValueError):
-			frappe.throw(_("Attachments must be a JSON array of file ids."), title=_("Invalid Attachments"))
-	if not isinstance(value, list):
-		frappe.throw(_("Attachments must be a list of file ids."), title=_("Invalid Attachments"))
-	files: list[str] = []
-	for file in value:
-		if not isinstance(file, str) or not file.strip():
-			frappe.throw(_("Each attachment must be a file id."), title=_("Invalid Attachments"))
-		files.append(file.strip())
-	return files
-
-
-def _parse_answers(answers: Any) -> dict[str, Any]:
-	if isinstance(answers, str):
-		try:
-			answers = json.loads(answers)
-		except (TypeError, ValueError):
-			frappe.throw(_("Answers must be a JSON object."), title=_("Invalid Answers"))
-	if not isinstance(answers, dict):
-		frappe.throw(_("Answers must be a JSON object."), title=_("Invalid Answers"))
-	return answers
-
-
-def _summarize(run: FlowRun) -> dict[str, Any]:
-	payload: dict[str, Any] = {
-		"name": run.name,
-		"session": run.session,
-		"status": run.status,
-		"iterations": run.iterations,
-	}
-	if run.status == "Completed":
-		payload["output"] = run.output
-	elif run.status == "Paused":
-		payload["questions"] = json.loads(run.questions) if run.questions else []
-	elif run.status == "Failed":
-		payload["error"] = run.error
-	return payload

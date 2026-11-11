@@ -1,3 +1,6 @@
+// Copyright (c) 2026, Shrihari Mahabal and contributors
+// For license information, please see license.txt
+
 import { serverMessage } from "./client";
 import { __ } from "@/lib/translate";
 
@@ -39,7 +42,5 @@ async function postStream(method, body, onEvent, signal) {
 	}
 }
 
-export const startRun = (body, onEvent, signal) =>
-	postStream("flow.api.start_run", body, onEvent, signal);
-export const resumeRun = (body, onEvent, signal) =>
-	postStream("flow.api.resume_run", body, onEvent, signal);
+export const startRun = (body, onEvent, signal) => postStream("flow.api.start_run", body, onEvent, signal);
+export const resumeRun = (body, onEvent, signal) => postStream("flow.api.resume_run", body, onEvent, signal);

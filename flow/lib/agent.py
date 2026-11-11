@@ -86,6 +86,74 @@ class Done:
 Event = TextChunk | ToolStarted | ToolEnded | Done
 
 
+def _validate_messages(messages: Any) -> None:
+	if not isinstance(messages, list):
+		raise TypeError(f"input must be a str or list of message dicts, got {type(messages).__name__}")
+	for i, message in enumerate(messages):
+		if not isinstance(message, dict):
+			raise TypeError(f"messages[{i}] must be a dict, got {type(message).__name__}")
+		role = message.get("role")
+		if role not in VALID_ROLES:
+			raise ValueError(f"messages[{i}].role must be one of {sorted(VALID_ROLES)}, got {role!r}")
+		if role == "tool" and not message.get("tool_call_id"):
+			raise ValueError(f"messages[{i}] is a tool message but has no tool_call_id")
+		if "content" not in message and "tool_calls" not in message:
+			raise ValueError(f"messages[{i}] must have 'content' or 'tool_calls'")
+
+
+def _assistant_message(response: ChatResponse) -> dict[str, Any]:
+	message: dict[str, Any] = {"role": "assistant", "content": response.content}
+	if response.tool_calls:
+		message["tool_calls"] = [
+			{
+				"id": call.id,
+				"type": "function",
+				"function": {
+					"name": call.name,
+					"arguments": json.dumps(call.arguments),
+				},
+			}
+			for call in response.tool_calls
+		]
+	return message
+
+
+def _confirmation_question(call: ToolCall, tool: Tool) -> Question:
+	"""Build the approval prompt shown to the user for a `requires_confirmation` tool call.
+	Uses the tool's `confirm_prompt` for a plain-English summary, falling back to a JSON dump."""
+	if tool.confirm_prompt:
+		body = tool.confirm_prompt(call.arguments)
+	else:
+		body = json.dumps(call.arguments, indent=2, default=str)
+	return Question(
+		prompt=_("Approve `{0}`?\n\n{1}").format(call.name, body),
+		options=["Approve", "Deny"],
+		allow_other=True,
+	)
+
+
+def _has_denial(answers: dict[str, Any]) -> bool:
+	"""A Deny answer halts the run — the user rejected an action, so stop rather than
+	continue. Approve and free-text (redirect) answers let the run proceed."""
+	return any(answer == "Deny" for answer in answers.values())
+
+
+def _serialize_tool_result(result: Any) -> str:
+	if isinstance(result, str):
+		return result
+	if result is None:
+		return ""
+	try:
+		return json.dumps(result, default=str)
+	except TypeError, ValueError:
+		return str(result)
+
+
+def _accumulate_usage(total: dict[str, int], delta: dict[str, int]) -> None:
+	for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+		total[key] += int(delta.get(key, 0) or 0)
+
+
 class Agent:
 	def __init__(
 		self,
@@ -120,111 +188,25 @@ class Agent:
 				raise ValueError(f"Duplicate tool name: {tool.name!r}")
 			self._tools_by_name[tool.name] = tool
 
-	def run(self, input: str | list[dict[str, Any]], *, stream: bool = False) -> RunResult | Generator[Event]:
-		"""Run the agent on `input`. With `stream=True`, returns a generator of `Event`s
-		(text deltas, tool start/end markers, and a final `Done` carrying the `RunResult`)."""
-		messages = self._build_initial_messages(input)
-		if stream:
-			return self._loop_stream(messages)
-		return self._loop(messages)
+	def _run_tool(self, call: ToolCall) -> Any:
+		"""Invoke the tool, returning its result or a serialized error message."""
+		tool = self._tools_by_name[call.name]
+		try:
+			return tool(**call.arguments)
+		except Exception as e:
+			return json.dumps({"error": str(e)[:ERROR_MESSAGE_LIMIT]})
 
-	def resume(
-		self,
-		messages: list[dict[str, Any]],
-		answers: dict[str, Any],
-		*,
-		stream: bool = False,
-	) -> RunResult | Generator[Event]:
-		"""Continue a run that paused on a question.
-
-		`answers` maps each pending tool_call_id to the user's answer: "Approve" runs
-		the tool, "Deny" records the rejection and stops the run, and any other free
-		text is returned to the LLM as redirect feedback so it can adjust and retry.
-		"""
-		if stream:
-			return self._resume_stream(messages, answers)
-		messages, _ = self._prepare_resume(messages, answers)
-		if _has_denial(answers):
-			return self._stopped_result(messages)
-		return self._loop(messages, self._answered_calls(messages))
-
-	def _resume_stream(self, messages: list[dict[str, Any]], answers: dict[str, Any]) -> Generator[Event]:
-		"""Stream a resume: first replay the just-resolved tool results so the UI can fill in
-		the tool cards that were awaiting an answer, then continue the agent loop (or stop
-		if the user denied)."""
-		messages, resolved = self._prepare_resume(messages, answers)
-		for call, content in resolved:
-			yield ToolEnded(id=call.id, name=call.name, result=content)
-		if _has_denial(answers):
-			yield Done(result=self._stopped_result(messages))
-			return
-		yield from self._loop_stream(messages, self._answered_calls(messages))
-
-	def _stopped_result(self, messages: list[dict[str, Any]]) -> RunResult:
-		"""Terminal result for a run the user denied: pending calls are already resolved in
-		`messages`, so end the turn here without another model call (no further tokens)."""
-		return RunResult(
-			output=None,
-			messages=messages,
-			tool_calls=self._answered_calls(messages),
-			iterations=0,
-		)
-
-	def new_session(self, *, title: str | None = None) -> Any:
-		"""Start a persisted conversation driven by this code agent (session's agent link is left empty)."""
-		from flow.lib.session import new_session
-
-		return new_session(self, title=title)
-
-	def snapshot(self) -> dict[str, Any]:
-		"""Config record stored on each Flow Run for traceability."""
-		return {
-			"title": self.name,
-			"model": self.model.model_id,
-			"instructions": self.instructions,
-			"tools": [t.name for t in self.tools],
-			"max_iterations": self.max_iterations,
-		}
-
-	def _prepare_resume(
-		self, messages: list[dict[str, Any]], answers: dict[str, Any]
-	) -> tuple[list[dict[str, Any]], list[tuple[ToolCall, str]]]:
-		"""Append a tool result for each pending call. Returns the new messages plus the
-		(call, content) pairs resolved, so a streaming resume can replay them as events."""
-		_validate_messages(messages)
-		messages = list(messages)
-		pending = self._pending_calls(messages)
-		if not pending:
-			raise ValueError("No questions awaiting an answer in the provided messages")
-
-		resolved: list[tuple[ToolCall, str]] = []
-		for call in pending:
-			answer = answers.get(call.id)
-			tool = self._tools_by_name.get(call.name)
-			if tool is not None and tool.requires_confirmation:
-				content = self._resolve_confirmation(call, answer)
-			else:
-				content = _serialize_tool_result(answer)
-			messages.append({"role": "tool", "tool_call_id": call.id, "content": content})
-			resolved.append((call, content))
-		return messages, resolved
-
-	def _resolve_confirmation(self, call: ToolCall, answer: Any) -> str:
-		"""Run the tool if approved; deny if rejected; redirect with user feedback otherwise."""
-		if answer == "Approve":
-			result = self._run_tool(call)
-			return _serialize_tool_result(result)
-		if answer == "Deny":
-			return json.dumps({"status": "denied", "message": "User denied this tool call."})
-		# Free-text "Other"
-		return json.dumps(
-			{
-				"status": "redirect",
-				"message": "Tool not executed.",
-				"user_feedback": answer,
-				"instruction": "The user wants changes before this proceeds. Read their feedback carefully, adjust your approach, and try again.",
-			}
-		)
+	def _invoke(self, call: ToolCall) -> Any:
+		"""Run a tool and return its raw result. A Question (returned or synthesized for
+		`requires_confirmation` tools) signals a pause."""
+		if call.error:
+			return json.dumps({"error": call.error})
+		tool = self._tools_by_name.get(call.name)
+		if tool is None:
+			return json.dumps({"error": f"Unknown tool: {call.name!r}"})
+		if tool.requires_confirmation and not self.auto_approve:
+			return _confirmation_question(call, tool)
+		return self._run_tool(call)
 
 	def _loop(
 		self, messages: list[dict[str, Any]], executed_calls: list[ToolCall] | None = None
@@ -345,13 +327,25 @@ class Agent:
 
 		raise RuntimeError(f"Agent {self.name!r} exceeded max_iterations ({self.max_iterations})")
 
-	def _pending_calls(self, messages: list[dict[str, Any]]) -> list[ToolCall]:
-		"""Tool calls in the transcript that have no tool result yet (awaiting an answer)."""
-		return self._transcript_calls(messages, answered=False)
+	def _build_initial_messages(self, input: str | list[dict[str, Any]]) -> list[dict[str, Any]]:
+		"""For a string, build [system?, user]. For a list, trust the caller and use it as-is —
+		the caller owns the system message and any history."""
+		if isinstance(input, str):
+			messages: list[dict[str, Any]] = []
+			if self.instructions:
+				messages.append({"role": "system", "content": self.instructions})
+			messages.append({"role": "user", "content": input})
+			return messages
+		_validate_messages(input)
+		return list(input)
 
-	def _answered_calls(self, messages: list[dict[str, Any]]) -> list[ToolCall]:
-		"""Tool calls in the transcript that already have a tool result (executed)."""
-		return self._transcript_calls(messages, answered=True)
+	def run(self, input: str | list[dict[str, Any]], *, stream: bool = False) -> RunResult | Generator[Event]:
+		"""Run the agent on `input`. With `stream=True`, returns a generator of `Event`s
+		(text deltas, tool start/end markers, and a final `Done` carrying the `RunResult`)."""
+		messages = self._build_initial_messages(input)
+		if stream:
+			return self._loop_stream(messages)
+		return self._loop(messages)
 
 	def _transcript_calls(self, messages: list[dict[str, Any]], *, answered: bool) -> list[ToolCall]:
 		has_result = {m.get("tool_call_id") for m in messages if m.get("role") == "tool"}
@@ -367,102 +361,108 @@ class Agent:
 				calls.append(ToolCall(id=tc["id"], name=fn["name"], arguments=json.loads(arguments)))
 		return calls
 
-	def _build_initial_messages(self, input: str | list[dict[str, Any]]) -> list[dict[str, Any]]:
-		"""For a string, build [system?, user]. For a list, trust the caller and use it as-is —
-		the caller owns the system message and any history."""
-		if isinstance(input, str):
-			messages: list[dict[str, Any]] = []
-			if self.instructions:
-				messages.append({"role": "system", "content": self.instructions})
-			messages.append({"role": "user", "content": input})
-			return messages
-		_validate_messages(input)
-		return list(input)
+	def _answered_calls(self, messages: list[dict[str, Any]]) -> list[ToolCall]:
+		"""Tool calls in the transcript that already have a tool result (executed)."""
+		return self._transcript_calls(messages, answered=True)
 
-	def _invoke(self, call: ToolCall) -> Any:
-		"""Run a tool and return its raw result. A Question (returned or synthesized for
-		`requires_confirmation` tools) signals a pause."""
-		if call.error:
-			return json.dumps({"error": call.error})
-		tool = self._tools_by_name.get(call.name)
-		if tool is None:
-			return json.dumps({"error": f"Unknown tool: {call.name!r}"})
-		if tool.requires_confirmation and not self.auto_approve:
-			return _confirmation_question(call, tool)
-		return self._run_tool(call)
+	def _stopped_result(self, messages: list[dict[str, Any]]) -> RunResult:
+		"""Terminal result for a run the user denied: pending calls are already resolved in
+		`messages`, so end the turn here without another model call (no further tokens)."""
+		return RunResult(
+			output=None,
+			messages=messages,
+			tool_calls=self._answered_calls(messages),
+			iterations=0,
+		)
 
-	def _run_tool(self, call: ToolCall) -> Any:
-		"""Invoke the tool, returning its result or a serialized error message."""
-		tool = self._tools_by_name[call.name]
-		try:
-			return tool(**call.arguments)
-		except Exception as e:
-			return json.dumps({"error": str(e)[:ERROR_MESSAGE_LIMIT]})
-
-
-def _validate_messages(messages: Any) -> None:
-	if not isinstance(messages, list):
-		raise TypeError(f"input must be a str or list of message dicts, got {type(messages).__name__}")
-	for i, message in enumerate(messages):
-		if not isinstance(message, dict):
-			raise TypeError(f"messages[{i}] must be a dict, got {type(message).__name__}")
-		role = message.get("role")
-		if role not in VALID_ROLES:
-			raise ValueError(f"messages[{i}].role must be one of {sorted(VALID_ROLES)}, got {role!r}")
-		if role == "tool" and not message.get("tool_call_id"):
-			raise ValueError(f"messages[{i}] is a tool message but has no tool_call_id")
-		if "content" not in message and "tool_calls" not in message:
-			raise ValueError(f"messages[{i}] must have 'content' or 'tool_calls'")
-
-
-def _assistant_message(response: ChatResponse) -> dict[str, Any]:
-	message: dict[str, Any] = {"role": "assistant", "content": response.content}
-	if response.tool_calls:
-		message["tool_calls"] = [
+	def _resolve_confirmation(self, call: ToolCall, answer: Any) -> str:
+		"""Run the tool if approved; deny if rejected; redirect with user feedback otherwise."""
+		if answer == "Approve":
+			result = self._run_tool(call)
+			return _serialize_tool_result(result)
+		if answer == "Deny":
+			return json.dumps({"status": "denied", "message": "User denied this tool call."})
+		# Free-text "Other"
+		return json.dumps(
 			{
-				"id": call.id,
-				"type": "function",
-				"function": {
-					"name": call.name,
-					"arguments": json.dumps(call.arguments),
-				},
+				"status": "redirect",
+				"message": "Tool not executed.",
+				"user_feedback": answer,
+				"instruction": "The user wants changes before this proceeds. Read their feedback carefully, adjust your approach, and try again.",
 			}
-			for call in response.tool_calls
-		]
-	return message
+		)
 
+	def _pending_calls(self, messages: list[dict[str, Any]]) -> list[ToolCall]:
+		"""Tool calls in the transcript that have no tool result yet (awaiting an answer)."""
+		return self._transcript_calls(messages, answered=False)
 
-def _confirmation_question(call: ToolCall, tool: Tool) -> Question:
-	"""Build the approval prompt shown to the user for a `requires_confirmation` tool call.
-	Uses the tool's `confirm_prompt` for a plain-English summary, falling back to a JSON dump."""
-	if tool.confirm_prompt:
-		body = tool.confirm_prompt(call.arguments)
-	else:
-		body = json.dumps(call.arguments, indent=2, default=str)
-	return Question(
-		prompt=_("Approve `{0}`?\n\n{1}").format(call.name, body),
-		options=["Approve", "Deny"],
-		allow_other=True,
-	)
+	def _prepare_resume(
+		self, messages: list[dict[str, Any]], answers: dict[str, Any]
+	) -> tuple[list[dict[str, Any]], list[tuple[ToolCall, str]]]:
+		"""Append a tool result for each pending call. Returns the new messages plus the
+		(call, content) pairs resolved, so a streaming resume can replay them as events."""
+		_validate_messages(messages)
+		messages = list(messages)
+		pending = self._pending_calls(messages)
+		if not pending:
+			raise ValueError("No questions awaiting an answer in the provided messages")
 
+		resolved: list[tuple[ToolCall, str]] = []
+		for call in pending:
+			answer = answers.get(call.id)
+			tool = self._tools_by_name.get(call.name)
+			if tool is not None and tool.requires_confirmation:
+				content = self._resolve_confirmation(call, answer)
+			else:
+				content = _serialize_tool_result(answer)
+			messages.append({"role": "tool", "tool_call_id": call.id, "content": content})
+			resolved.append((call, content))
+		return messages, resolved
 
-def _has_denial(answers: dict[str, Any]) -> bool:
-	"""A Deny answer halts the run — the user rejected an action, so stop rather than
-	continue. Approve and free-text (redirect) answers let the run proceed."""
-	return any(answer == "Deny" for answer in answers.values())
+	def _resume_stream(self, messages: list[dict[str, Any]], answers: dict[str, Any]) -> Generator[Event]:
+		"""Stream a resume: first replay the just-resolved tool results so the UI can fill in
+		the tool cards that were awaiting an answer, then continue the agent loop (or stop
+		if the user denied)."""
+		messages, resolved = self._prepare_resume(messages, answers)
+		for call, content in resolved:
+			yield ToolEnded(id=call.id, name=call.name, result=content)
+		if _has_denial(answers):
+			yield Done(result=self._stopped_result(messages))
+			return
+		yield from self._loop_stream(messages, self._answered_calls(messages))
 
+	def resume(
+		self,
+		messages: list[dict[str, Any]],
+		answers: dict[str, Any],
+		*,
+		stream: bool = False,
+	) -> RunResult | Generator[Event]:
+		"""Continue a run that paused on a question.
 
-def _serialize_tool_result(result: Any) -> str:
-	if isinstance(result, str):
-		return result
-	if result is None:
-		return ""
-	try:
-		return json.dumps(result, default=str)
-	except (TypeError, ValueError):
-		return str(result)
+		`answers` maps each pending tool_call_id to the user's answer: "Approve" runs
+		the tool, "Deny" records the rejection and stops the run, and any other free
+		text is returned to the LLM as redirect feedback so it can adjust and retry.
+		"""
+		if stream:
+			return self._resume_stream(messages, answers)
+		messages, _ = self._prepare_resume(messages, answers)
+		if _has_denial(answers):
+			return self._stopped_result(messages)
+		return self._loop(messages, self._answered_calls(messages))
 
+	def new_session(self, *, title: str | None = None) -> Any:
+		"""Start a persisted conversation driven by this code agent (session's agent link is left empty)."""
+		from flow.lib.session import new_session
 
-def _accumulate_usage(total: dict[str, int], delta: dict[str, int]) -> None:
-	for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
-		total[key] += int(delta.get(key, 0) or 0)
+		return new_session(self, title=title)
+
+	def snapshot(self) -> dict[str, Any]:
+		"""Config record stored on each Flow Run for traceability."""
+		return {
+			"title": self.name,
+			"model": self.model.model_id,
+			"instructions": self.instructions,
+			"tools": [t.name for t in self.tools],
+			"max_iterations": self.max_iterations,
+		}

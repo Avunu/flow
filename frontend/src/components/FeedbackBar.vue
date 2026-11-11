@@ -95,10 +95,7 @@ async function submit(value, text = "") {
 			</button>
 		</div>
 
-		<div
-			v-if="open"
-			class="mt-1.5 rounded-lg border border-outline-gray-2 bg-surface-white p-2.5"
-		>
+		<div v-if="open" class="mt-1.5 rounded-lg border border-outline-gray-2 bg-surface-white p-2.5">
 			<textarea
 				ref="commentEl"
 				v-model="comment"
@@ -110,13 +107,7 @@ async function submit(value, text = "") {
 			></textarea>
 			<div class="mt-1.5 flex justify-end gap-1.5">
 				<Button variant="ghost" :label="__('Cancel')" @click="cancel" />
-				<Button
-					variant="solid"
-					theme="gray"
-					:label="__('Submit')"
-					:disabled="submitting"
-					@click="sendDown"
-				/>
+				<Button variant="solid" theme="gray" :label="__('Submit')" :disabled="submitting" @click="sendDown" />
 			</div>
 		</div>
 	</div>

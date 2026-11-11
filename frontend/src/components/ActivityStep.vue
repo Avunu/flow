@@ -17,9 +17,7 @@ const props = defineProps({
 	live: { type: Boolean, default: false },
 });
 
-const active = computed(
-	() => props.live && props.part.result === null && props.part.approval === null
-);
+const active = computed(() => props.live && props.part.result === null && props.part.approval === null);
 const label = computed(() => toolLabel(props.part.name));
 const context = computed(() => toolContext(props.part.arguments));
 const error = computed(() => toolError(props.part.result));
@@ -54,17 +52,9 @@ function toggle() {
 				:class="expandable ? '' : 'cursor-default'"
 				@click="toggle"
 			>
-				<ActivityLabel
-					:text="label"
-					:active="active"
-					class="text-sm font-medium text-ink-gray-8"
-				/>
-				<span v-if="context" class="truncate text-xs text-ink-gray-4"
-					>· {{ context }}</span
-				>
-				<span v-if="error" class="shrink-0 text-xs text-ink-gray-5"
-					>· {{ __("Failed") }}</span
-				>
+				<ActivityLabel :text="label" :active="active" class="text-sm font-medium text-ink-gray-8" />
+				<span v-if="context" class="truncate text-xs text-ink-gray-4">· {{ context }}</span>
+				<span v-if="error" class="shrink-0 text-xs text-ink-gray-5">· {{ __("Failed") }}</span>
 				<span class="flex-1"></span>
 				<FeatherIcon
 					v-if="expandable"
@@ -81,11 +71,7 @@ function toggle() {
 			</div>
 			<div class="min-w-0 flex-1 pb-2">
 				<ArgsView :arguments="part.arguments" :block-keys="blockKeys" />
-				<ToolError
-					v-if="error"
-					:message="error"
-					:class="{ 'mt-2': hasArgs(part.arguments) }"
-				/>
+				<ToolError v-if="error" :message="error" :class="{ 'mt-2': hasArgs(part.arguments) }" />
 			</div>
 		</div>
 	</div>

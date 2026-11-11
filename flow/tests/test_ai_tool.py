@@ -70,7 +70,7 @@ class TestToolDecorator(UnitTestCase):
 
 class TestSchemaPrimitives(UnitTestCase):
 	def test_primitives_and_required_flag(self):
-		def f(s: str, i: int, x: float, b: bool):
+		def f(s: str, i: int, x: float, b: bool):  # frappe-vulture:ignore
 			pass
 
 		schema = build_schema(f)
@@ -87,7 +87,7 @@ class TestSchemaPrimitives(UnitTestCase):
 		self.assertFalse(schema["additionalProperties"])
 
 	def test_default_value_makes_argument_optional(self):
-		def f(city: str, units: str = "metric"):
+		def f(city: str, units: str = "metric"):  # frappe-vulture:ignore
 			pass
 
 		schema = build_schema(f)
@@ -110,7 +110,7 @@ class TestSchemaPrimitives(UnitTestCase):
 		self.assertEqual(schema["properties"]["city"], {"type": "string"})
 
 	def test_list_of_primitive(self):
-		def f(tags: list[str]):
+		def f(tags: list[str]):  # frappe-vulture:ignore
 			pass
 
 		schema = build_schema(f)
@@ -137,7 +137,7 @@ class TestSchemaPrimitives(UnitTestCase):
 		self.assertEqual(schema["properties"]["metadata"], {"type": "object"})
 
 	def test_literal_becomes_string_enum(self):
-		def f(units: Literal["metric", "imperial"]):
+		def f(units: Literal["metric", "imperial"]):  # frappe-vulture:ignore
 			pass
 
 		schema = build_schema(f)
@@ -186,7 +186,7 @@ class TestSchemaPrimitives(UnitTestCase):
 			street: str
 			city: str = Field(..., description="The city")
 
-		def f(addr: Address):
+		def f(addr: Address):  # frappe-vulture:ignore
 			pass
 
 		schema = build_schema(f)
@@ -202,7 +202,7 @@ class TestSchemaPrimitives(UnitTestCase):
 		class Outer(BaseModel):
 			inner: Inner
 
-		def f(outer: Outer):
+		def f(outer: Outer):  # frappe-vulture:ignore
 			pass
 
 		schema = build_schema(f)
@@ -214,7 +214,7 @@ class TestSchemaPrimitives(UnitTestCase):
 		self.assertIn("x", inner_schema["properties"])
 
 	def test_var_args_and_kwargs_are_skipped(self):
-		def f(x: int, *args, **kwargs):
+		def f(x: int, *args, **kwargs):  # frappe-vulture:ignore
 			pass
 
 		schema = build_schema(f)

@@ -38,8 +38,6 @@ class FlowSessionAttachment(Document):
 		run: DF.Link | None
 	# end: auto-generated types
 
-	pass
-
 
 def extract_attachment(file: str) -> dict[str, Any]:
 	"""Validate and extract text from an uploaded File. Raises (so errors surface at

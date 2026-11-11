@@ -34,8 +34,7 @@ frappe.ui.form.on("Flow Knowledge Source", {
 			return;
 		}
 		const changed =
-			baseline.chunk_size !== frm.doc.chunk_size ||
-			baseline.chunk_overlap !== frm.doc.chunk_overlap;
+			baseline.chunk_size !== frm.doc.chunk_size || baseline.chunk_overlap !== frm.doc.chunk_overlap;
 		if (!changed) {
 			return;
 		}
@@ -46,14 +45,14 @@ frappe.ui.form.on("Flow Knowledge Source", {
 		frappe.confirm(
 			__(
 				"Chunk settings changed. The {0} existing chunks for this source will be deleted and rebuilt with the new settings. Re-process now?",
-				[frm.doc.chunk_count]
+				[frm.doc.chunk_count],
 			),
 			() => {
 				frm.call("resync", { rebuild: 1 }).then(() => {
 					frappe.show_alert({ message: __("Re-ingestion started"), indicator: "blue" });
 					frm.reload_doc();
 				});
-			}
+			},
 		);
 	},
 

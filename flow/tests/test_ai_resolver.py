@@ -162,13 +162,13 @@ class TestResolveTool(IntegrationTestCase):
 
 	def test_module_import_failure_throws(self):
 		doc = frappe.get_doc(_module_doc()).insert()
-		with patch("frappe.get_attr", side_effect=ImportError("nope")):
+		with patch("frappe.get_attr", side_effect=ImportError("nope")):  # noqa: SIM117
 			with self.assertRaisesRegex(frappe.ValidationError, "import"):
 				doc.to_tool()
 
 	def test_module_non_callable_throws(self):
 		doc = frappe.get_doc(_module_doc()).insert()
-		with patch("frappe.get_attr", return_value=42):
+		with patch("frappe.get_attr", return_value=42):  # noqa: SIM117
 			with self.assertRaisesRegex(frappe.ValidationError, "not a Tool or callable"):
 				doc.to_tool()
 

@@ -10,9 +10,7 @@ defineProps({
 </script>
 
 <template>
-	<div
-		class="flex flex-1 flex-col items-center justify-center gap-2.5 text-center text-ink-gray-6"
-	>
+	<div class="flex flex-1 flex-col items-center justify-center gap-2.5 text-center text-ink-gray-6">
 		<BrandMark :size="34" />
 
 		<template v-if="setup">
@@ -33,20 +31,12 @@ defineProps({
 					v-if="!hasAgents"
 					class="rounded-lg border border-outline-gray-1 bg-surface-gray-1 px-3 py-2 text-xs leading-relaxed text-ink-gray-8"
 				>
-					{{
-						__(
-							"Enable a Flow Agent (Flow Agent is created automatically once a model exists)."
-						)
-					}}
+					{{ __("Enable a Flow Agent (Flow Agent is created automatically once a model exists).") }}
 				</li>
 				<li
 					class="rounded-lg border border-outline-gray-1 bg-surface-gray-1 px-3 py-2 text-xs leading-relaxed text-ink-gray-8"
 				>
-					{{
-						__(
-							"Enable Server Scripts in your site config so the assistant can run code."
-						)
-					}}
+					{{ __("Enable Server Scripts in your site config so the assistant can run code.") }}
 				</li>
 			</ol>
 		</template>

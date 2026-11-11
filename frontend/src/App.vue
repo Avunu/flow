@@ -34,10 +34,7 @@ onUnmounted(() => observer?.disconnect());
 		ref="panel"
 		class="flow-panel relative flex h-full flex-col border-l border-outline-gray-2 bg-surface-white text-ink-gray-9"
 	>
-		<PanelHeader
-			:on-toggle-fullscreen="props.onToggleFullscreen"
-			@close="props.onClose && props.onClose()"
-		/>
+		<PanelHeader :on-toggle-fullscreen="props.onToggleFullscreen" @close="props.onClose && props.onClose()" />
 		<MessageList />
 		<Composer ref="composer" />
 	</div>

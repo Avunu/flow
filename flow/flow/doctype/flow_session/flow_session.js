@@ -30,8 +30,8 @@ frappe.ui.form.on("Flow Session", {
 			return item;
 		});
 
-		frm.get_field("transcript_html").$wrapper.html(
-			frappe.render_template("flow_session_transcript", { items })
-		);
+		frm
+			.get_field("transcript_html")
+			.$wrapper.html(frappe.render_template("flow_session_transcript", { items }));
 	},
 });

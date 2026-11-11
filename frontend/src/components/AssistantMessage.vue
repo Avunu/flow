@@ -29,8 +29,7 @@ const items = computed(() => {
 		}
 		if (isApproval(part)) {
 			const q = questionByKey.value.get(part.id);
-			if (q && q._answer === undefined)
-				out.push({ kind: "confirm", id: part.id, question: q, part });
+			if (q && q._answer === undefined) out.push({ kind: "confirm", id: part.id, question: q, part });
 			else out.push({ kind: "approval", id: part.id, parts: [part] });
 			continue;
 		}
@@ -47,7 +46,7 @@ const showWorking = computed(() => props.message.pending && !props.message.parts
 
 // Thumbs only on finished turns that map to a run (not pending, not awaiting approval).
 const showFeedback = computed(
-	() => props.message.runName && !props.message.pending && !props.message.questions?.length
+	() => props.message.runName && !props.message.pending && !props.message.questions?.length,
 );
 
 // Reveal the feedback bar on hover; FeedbackBar keeps itself visible once rated.
@@ -55,11 +54,7 @@ const hovered = ref(false);
 </script>
 
 <template>
-	<div
-		class="flow-parts flex flex-col"
-		@mouseenter="hovered = true"
-		@mouseleave="hovered = false"
-	>
+	<div class="flow-parts flex flex-col" @mouseenter="hovered = true" @mouseleave="hovered = false">
 		<template v-for="(item, i) in items" :key="item.id">
 			<MarkdownText v-if="item.kind === 'text'" :part="item.part" />
 			<ConfirmCard
@@ -68,12 +63,7 @@ const hovered = ref(false);
 				:tool="item.part"
 				@answer="(answer) => answerQuestion(message, item.question, answer)"
 			/>
-			<ActivityGroup
-				v-else
-				:parts="item.parts"
-				:sealed="i < items.length - 1"
-				:live="message.pending"
-			/>
+			<ActivityGroup v-else :parts="item.parts" :sealed="i < items.length - 1" :live="message.pending" />
 		</template>
 
 		<WorkingIndicator v-if="showWorking" />

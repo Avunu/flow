@@ -19,34 +19,6 @@ EMBED_TIMEOUT = 120
 PROBE_TIMEOUT = 30
 
 
-def embed_texts(texts: list[str]) -> list[list[float]]:
-	"""Embed texts with the model from Flow Knowledge Settings, preserving order."""
-	if not texts:
-		return []
-	config = _embedding_config()
-	vectors: list[list[float]] = []
-	for start in range(0, len(texts), BATCH_SIZE):
-		vectors.extend(_embed_batch(texts[start : start + BATCH_SIZE], config, timeout=EMBED_TIMEOUT))
-	return vectors
-
-
-def probe_dimension(model: str) -> int:
-	"""Vector width a Flow Model's embeddings come back with, via a one-input call."""
-	config = _model_config(model)
-	(vector,) = _embed_batch(["dimension probe"], config, timeout=PROBE_TIMEOUT)
-	return len(vector)
-
-
-def _embedding_config() -> dict[str, Any]:
-	settings = frappe.get_cached_doc("Flow Knowledge Settings")
-	if not settings.embedding_model:
-		frappe.throw(
-			_("Set an embedding model in Flow Knowledge Settings first."),
-			title=_("Knowledge Not Configured"),
-		)
-	return _model_config(settings.embedding_model)
-
-
 def _model_config(model: str) -> dict[str, Any]:
 	from flow.lib.model import resolve_provider_credentials
 
@@ -63,6 +35,20 @@ def _model_config(model: str) -> dict[str, Any]:
 	if base_url:
 		config["api_base"] = base_url
 	return config
+
+
+def _embedding_config() -> dict[str, Any]:
+	settings = frappe.get_cached_doc("Flow Knowledge Settings")
+	if not settings.embedding_model:
+		frappe.throw(
+			_("Set an embedding model in Flow Knowledge Settings first."),
+			title=_("Knowledge Not Configured"),
+		)
+	return _model_config(settings.embedding_model)
+
+
+def _get(entry: Any, key: str) -> Any:
+	return entry.get(key) if isinstance(entry, dict) else getattr(entry, key, None)
 
 
 def _embed_batch(texts: list[str], config: dict[str, Any], *, timeout: int) -> list[list[float]]:
@@ -83,5 +69,19 @@ def _embed_batch(texts: list[str], config: dict[str, Any], *, timeout: int) -> l
 	return vectors
 
 
-def _get(entry: Any, key: str) -> Any:
-	return entry.get(key) if isinstance(entry, dict) else getattr(entry, key, None)
+def embed_texts(texts: list[str]) -> list[list[float]]:
+	"""Embed texts with the model from Flow Knowledge Settings, preserving order."""
+	if not texts:
+		return []
+	config = _embedding_config()
+	vectors: list[list[float]] = []
+	for start in range(0, len(texts), BATCH_SIZE):
+		vectors.extend(_embed_batch(texts[start : start + BATCH_SIZE], config, timeout=EMBED_TIMEOUT))
+	return vectors
+
+
+def probe_dimension(model: str) -> int:
+	"""Vector width a Flow Model's embeddings come back with, via a one-input call."""
+	config = _model_config(model)
+	(vector,) = _embed_batch(["dimension probe"], config, timeout=PROBE_TIMEOUT)
+	return len(vector)

@@ -27,7 +27,7 @@ frappe.ui.form.on("Flow Run", {
 				config: parse(frm.doc.config_snapshot),
 				calls: parse(frm.doc.tool_calls),
 				questions: parse(frm.doc.questions),
-			})
+			}),
 		);
 	},
 });

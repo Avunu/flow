@@ -41,9 +41,7 @@ const status = computed(() => {
 });
 
 // A lone step reveals its inputs, or its error when it failed with none.
-const expandable = computed(
-	() => !single.value || hasArgs(props.parts[0].arguments) || Boolean(error.value)
-);
+const expandable = computed(() => !single.value || hasArgs(props.parts[0].arguments) || Boolean(error.value));
 const open = ref(false);
 function toggle() {
 	if (expandable.value) open.value = !open.value;
@@ -74,17 +72,10 @@ function toggle() {
 		<Transition name="flow-reveal">
 			<!-- The open call's content sits in a bordered card so it can't bleed into
 			the next block. Single: inputs directly; multiple: a connected timeline. -->
-			<div
-				v-if="open"
-				class="mb-2 mt-1.5 rounded-lg border border-outline-gray-1 px-3 py-2.5"
-			>
+			<div v-if="open" class="mb-2 mt-1.5 rounded-lg border border-outline-gray-1 px-3 py-2.5">
 				<template v-if="single">
 					<ArgsView :arguments="parts[0].arguments" />
-					<ToolError
-						v-if="error"
-						:message="error"
-						:class="{ 'mt-2': hasArgs(parts[0].arguments) }"
-					/>
+					<ToolError v-if="error" :message="error" :class="{ 'mt-2': hasArgs(parts[0].arguments) }" />
 				</template>
 				<div v-else>
 					<ActivityStep

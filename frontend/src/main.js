@@ -1,3 +1,6 @@
+// Copyright (c) 2026, Shrihari Mahabal and contributors
+// For license information, please see license.txt
+
 import { createApp, watch } from "vue";
 import App from "@/App.vue";
 import { useStore } from "@/store";

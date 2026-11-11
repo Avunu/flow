@@ -1,3 +1,6 @@
+# Copyright (c) 2026, Shrihari Mahabal and contributors
+# For license information, please see license.txt
+
 app_name = "flow"
 app_title = "Flow"
 app_publisher = "Shrihari Mahabal"
@@ -11,7 +14,7 @@ export_python_type_annotations = True
 # /assets path bypasses the desk's esbuild pipeline. Run `yarn build` in the app root.
 # /assets URLs get no cache-busting query from Frappe, so append ?v=<mtime>:
 # the stable filename keeps the hook simple while a rebuild invalidates the cache.
-import os as _os
+import os as _os  # noqa: E402
 
 
 def _flow_panel_asset(filename: str) -> str:
@@ -28,11 +31,11 @@ app_include_css = [_flow_panel_asset("flow_panel.css")]
 
 doc_events = {
 	"*": {
-		"after_insert": "flow.triggers.dispatch",
-		"on_update": "flow.triggers.dispatch",
-		"on_submit": "flow.triggers.dispatch",
-		"on_cancel": "flow.triggers.dispatch",
-		"on_trash": "flow.triggers.dispatch",
+		"after_insert": "flow.triggers.dispatch",  # frappe-vulture:ignore
+		"on_update": "flow.triggers.dispatch",  # frappe-vulture:ignore
+		"on_submit": "flow.triggers.dispatch",  # frappe-vulture:ignore
+		"on_cancel": "flow.triggers.dispatch",  # frappe-vulture:ignore
+		"on_trash": "flow.triggers.dispatch",  # frappe-vulture:ignore
 	}
 }
 
@@ -52,11 +55,11 @@ scheduler_events = {
 	],
 	"cron": {
 		"*/5 * * * *": [
-			"flow.triggers.dispatch_scheduled",
+			"flow.triggers.dispatch_scheduled",  # frappe-vulture:ignore
 		],
 	},
 }
 
-after_migrate = ["flow.assistant.sync_builtin_assistant"]
+after_migrate = ["flow.assistant.sync_builtin_assistant"]  # frappe-vulture:ignore
 
 extend_bootinfo = "flow.boot.boot_session"

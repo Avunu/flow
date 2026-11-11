@@ -48,6 +48,21 @@ def retrieve_attachments(query: str, *, session: str, limit: int = DEFAULT_LIMIT
 	return attachment_store.search(vector, session=session, text=text, limit=limit)
 
 
+def _enabled_kbs(kbs: list[str]) -> list[str]:
+	"""Keep only knowledge bases that still exist and are enabled. Disabling or
+	deleting a KB removes it from every bound agent's reach without re-binding."""
+	return frappe.get_all(KB_DOCTYPE, filters={"name": ["in", kbs], "enabled": 1}, pluck="name")
+
+
+def _hydrate(ids: set[int]) -> dict[int, dict[str, Any]]:
+	rows = frappe.get_all(
+		CHUNK_DOCTYPE,
+		filters={"name": ["in", list(ids)]},
+		fields=["name", "content", "source", "reference_doctype", "reference_name"],
+	)
+	return {int(row["name"]): row for row in rows}
+
+
 def retrieve(query: str, *, kbs: list[str], limit: int = DEFAULT_LIMIT) -> list[dict[str, Any]]:
 	"""Return the best-matching chunks within `kbs`, most relevant first.
 
@@ -93,18 +108,3 @@ def retrieve(query: str, *, kbs: list[str], limit: int = DEFAULT_LIMIT) -> list[
 			}
 		)
 	return results
-
-
-def _enabled_kbs(kbs: list[str]) -> list[str]:
-	"""Keep only knowledge bases that still exist and are enabled. Disabling or
-	deleting a KB removes it from every bound agent's reach without re-binding."""
-	return frappe.get_all(KB_DOCTYPE, filters={"name": ["in", kbs], "enabled": 1}, pluck="name")
-
-
-def _hydrate(ids: set[int]) -> dict[int, dict[str, Any]]:
-	rows = frappe.get_all(
-		CHUNK_DOCTYPE,
-		filters={"name": ["in", list(ids)]},
-		fields=["name", "content", "source", "reference_doctype", "reference_name"],
-	)
-	return {int(row["name"]): row for row in rows}

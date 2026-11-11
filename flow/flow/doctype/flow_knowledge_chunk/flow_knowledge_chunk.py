@@ -21,5 +21,3 @@ class FlowKnowledgeChunk(Document):
 		reference_name: DF.DynamicLink | None
 		source: DF.Link
 	# end: auto-generated types
-
-	pass

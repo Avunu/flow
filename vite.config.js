@@ -1,3 +1,7 @@
+// Copyright (c) 2026, Shrihari Mahabal and contributors
+// For license information, please see license.txt
+
+import "./scripts/vue-sfc-typescript.mjs";
 import { fileURLToPath, URL } from "node:url";
 import vue from "@vitejs/plugin-vue";
 import { defineConfig } from "vite";
@@ -21,9 +25,7 @@ export default defineConfig({
 			// individual components without dragging in the whole index (tiptap, echarts, …).
 			{
 				find: "frappe-ui/src",
-				replacement: fileURLToPath(
-					new URL("./node_modules/frappe-ui/src", import.meta.url)
-				),
+				replacement: fileURLToPath(new URL("./node_modules/frappe-ui/src", import.meta.url)),
 			},
 		],
 	},

@@ -19,6 +19,13 @@ from flow.lib.model import ChatResponse, ToolCall
 from flow.lib.tool import tool
 
 
+def _scripted_stream(text_parts: list[str], response: ChatResponse):
+	for part in text_parts:
+		if part:
+			yield part
+	return response
+
+
 class FakeModel:
 	def __init__(self, responses: list[ChatResponse], streams: list[list[str]] | None = None):
 		"""`responses` are returned by chat(); `streams` (optional) are the text-delta
@@ -36,13 +43,6 @@ class FakeModel:
 		if stream:
 			return _scripted_stream(text_parts, response)
 		return response
-
-
-def _scripted_stream(text_parts: list[str], response: ChatResponse):
-	for part in text_parts:
-		if part:
-			yield part
-	return response
 
 
 def _final(text: str, usage: dict[str, int] | None = None) -> ChatResponse:
@@ -680,7 +680,7 @@ class TestAgentConfirmation(UnitTestCase):
 			requires_confirmation=True,
 			confirm_prompt=lambda args: f"Send email to {args['to']}",
 		)
-		def send_email(to: str, body: str) -> str:
+		def send_email(to: str, body: str) -> str:  # frappe-vulture:ignore
 			"""Send an email."""
 			return "sent"
 

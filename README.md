@@ -1,3 +1,6 @@
+<!-- Copyright (c) 2026, Shrihari Mahabal and contributors
+For license information, please see license.txt-->
+
 <div align="center">
 
 # Flow
@@ -16,16 +19,18 @@
 Flow puts an AI assistant inside your Frappe site. It knows your DocTypes, respects your permissions, and can operate your site in plain English — creating records, sending emails, building DocTypes, creating agents and tools, and setting up RAG chatbots.
 
 **Set up a support agent:**
-> *"Create an agent that resolves customer support issues. It should use the Support Ticket doctype and these files as its knowledge: [attach files]"*
+
+> _"Create an agent that resolves customer support issues. It should use the Support Ticket doctype and these files as its knowledge: [attach files]"_
 
 Flow sets up the RAG pipeline, embeds and indexes the files, and keeps the DocType source in sync — automatically.
 
-
 **Put reporting on autopilot:**
-> *"Every weekday at 9am, email me a summary of yesterday's new leads with their contact details and source."*
+
+> _"Every weekday at 9am, email me a summary of yesterday's new leads with their contact details and source."_
 
 **Do anything a user can do:**
-> *"Find all overdue sales orders from last month and mark them as closed."*
+
+> _"Find all overdue sales orders from last month and mark them as closed."_
 
 ---
 
@@ -33,7 +38,7 @@ Flow sets up the RAG pipeline, embeds and indexes the files, and keeps the DocTy
 
 You can open the global AI chat interface from anywhere in the Frappe Desk by pressing:
 
-<kbd>Cmd</kbd> + <kbd>I</kbd> *(or <kbd>Ctrl</kbd> + <kbd>I</kbd> on Windows)*
+<kbd>Cmd</kbd> + <kbd>I</kbd> _(or <kbd>Ctrl</kbd> + <kbd>I</kbd> on Windows)_
 
 ---
 
@@ -43,21 +48,22 @@ Flow also ships as a Python framework for building agents in code.
 
 ### DocTypes
 
-| DocType | Purpose |
-| --- | --- |
-| `Flow Provider` | Provider-level credentials and endpoint settings |
-| `Flow Model` | Model configuration — set a `model_id` like `anthropic/claude-sonnet-4-6` |
-| `Flow Tool` | Reusable tools, defined as a module path or inline script |
-| `Flow Agent` | Instructions, model, and tools — configurable from the Desk or in code |
-| `Flow Trigger` | Run an agent on a DocType event or a schedule |
+| DocType                                         | Purpose                                                                   |
+| ----------------------------------------------- | ------------------------------------------------------------------------- |
+| `Flow Provider`                                 | Provider-level credentials and endpoint settings                          |
+| `Flow Model`                                    | Model configuration — set a `model_id` like `anthropic/claude-sonnet-4-6` |
+| `Flow Tool`                                     | Reusable tools, defined as a module path or inline script                 |
+| `Flow Agent`                                    | Instructions, model, and tools — configurable from the Desk or in code    |
+| `Flow Trigger`                                  | Run an agent on a DocType event or a schedule                             |
 | `Flow Knowledge Base` / `Flow Knowledge Source` | Knowledge sources (files, URLs, DocTypes) for retrieval-augmented answers |
-| `Flow Session` / `Flow Run` | Persisted conversations and execution history |
+| `Flow Session` / `Flow Run`                     | Persisted conversations and execution history                             |
 
 ### Define a tool
 
 ```python
 import frappe
-from flow import tool
+from flow.lib import tool
+
 
 @tool
 def get_open_todos(allocated_to: str) -> list[dict]:
@@ -72,7 +78,7 @@ def get_open_todos(allocated_to: str) -> list[dict]:
 ### Run an agent
 
 ```python
-from flow import Agent
+from flow.lib import Agent
 
 agent = Agent(
 	model="anthropic/claude-sonnet-4-6",
@@ -97,16 +103,16 @@ Every turn is saved as a `Flow Run` linked to the session — so conversation hi
 
 ### Built-in tools
 
-| Tool | What it does |
-| --- | --- |
-| `find_doctypes` | Search for DocTypes by name or module |
-| `describe` | Get the fields, filters, and available actions for a DocType or record |
-| `read` | Fetch records from any DocType |
-| `create` | Create one or more records |
-| `update` | Update fields across multiple records at once |
-| `delete` | Delete records |
-| `run_action` | Call a whitelisted method or workflow action on a record |
-| `execute` | Run arbitrary Python in a sandboxed context |
+| Tool            | What it does                                                           |
+| --------------- | ---------------------------------------------------------------------- |
+| `find_doctypes` | Search for DocTypes by name or module                                  |
+| `describe`      | Get the fields, filters, and available actions for a DocType or record |
+| `read`          | Fetch records from any DocType                                         |
+| `create`        | Create one or more records                                             |
+| `update`        | Update fields across multiple records at once                          |
+| `delete`        | Delete records                                                         |
+| `run_action`    | Call a whitelisted method or workflow action on a record               |
+| `execute`       | Run arbitrary Python in a sandboxed context                            |
 
 Tool calls can require human confirmation before executing, and every run is persisted for audit.
 

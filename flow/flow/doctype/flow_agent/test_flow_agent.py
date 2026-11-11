@@ -155,8 +155,8 @@ class TestFlowAgentKnowledgeSearch(IntegrationTestCase):
 
 	def test_llm_supplied_kbs_are_rejected(self):
 		tool = self._search_tool([self.kb.name])
-		with patch("flow.knowledge.retriever.retrieve", return_value=[]) as mock:
-			with self.assertRaises(Exception):
+		with patch("flow.knowledge.retriever.retrieve", return_value=[]) as mock:  # noqa: SIM117
+			with self.assertRaises(Exception):  # noqa: B017
 				tool(query="hello", kbs=["Some Other KB"])
 		mock.assert_not_called()
 
@@ -227,7 +227,7 @@ class TestFlowAgentRun(IntegrationTestCase):
 		self.assertEqual(ai_run.source, "Trigger")
 
 	def test_run_marks_failed_and_reraises_on_exception(self):
-		with patch.object(Model, "chat", side_effect=RuntimeError("boom")):
+		with patch.object(Model, "chat", side_effect=RuntimeError("boom")):  # noqa: SIM117
 			with self.assertRaises(RuntimeError):
 				self.agent_doc.run("hi")
 

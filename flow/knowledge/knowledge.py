@@ -18,11 +18,34 @@ SOURCE_DOCTYPE = "Flow Knowledge Source"
 _TITLE_LIMIT = 140
 
 
+def _ensure_kb(title: str, description: str | None) -> str:
+	title = (title or "").strip()
+	if not title:
+		frappe.throw(_("Knowledge base title is required."), title=_("Invalid Knowledge Base"))
+	if frappe.db.exists(KB_DOCTYPE, title):
+		return title
+	return frappe.get_doc({"doctype": KB_DOCTYPE, "title": title, "description": description}).insert().name
+
+
+def _snippet(content: str) -> str:
+	text = " ".join((content or "").split())
+	return text[:_TITLE_LIMIT] or "Text"
+
+
 class Knowledge:
 	"""A handle to a named Flow Knowledge Base. Construction is get-or-create by title."""
 
 	def __init__(self, title: str, *, description: str | None = None) -> None:
 		self.name = _ensure_kb(title, description)
+
+	def _ingest(self, **fields: object) -> str:
+		from flow.knowledge.ingest import ingest_source
+
+		source = frappe.get_doc({"doctype": SOURCE_DOCTYPE, "knowledge_base": self.name, **fields})
+		source.flags.skip_auto_ingest = True
+		source.insert()
+		ingest_source(source.name)
+		return source.name
 
 	def add_text(self, content: str, *, title: str | None = None) -> str:
 		return self._ingest(source_type="Text", title=title or _snippet(content), content=content)
@@ -60,26 +83,3 @@ class Knowledge:
 			filters=frappe.as_json(filters) if filters else None,
 			auto_sync=int(auto_sync),
 		)
-
-	def _ingest(self, **fields: object) -> str:
-		from flow.knowledge.ingest import ingest_source
-
-		source = frappe.get_doc({"doctype": SOURCE_DOCTYPE, "knowledge_base": self.name, **fields})
-		source.flags.skip_auto_ingest = True
-		source.insert()
-		ingest_source(source.name)
-		return source.name
-
-
-def _ensure_kb(title: str, description: str | None) -> str:
-	title = (title or "").strip()
-	if not title:
-		frappe.throw(_("Knowledge base title is required."), title=_("Invalid Knowledge Base"))
-	if frappe.db.exists(KB_DOCTYPE, title):
-		return title
-	return frappe.get_doc({"doctype": KB_DOCTYPE, "title": title, "description": description}).insert().name
-
-
-def _snippet(content: str) -> str:
-	text = " ".join((content or "").split())
-	return text[:_TITLE_LIMIT] or "Text"

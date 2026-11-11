@@ -225,12 +225,12 @@ class TestEmbedder(IntegrationTestCase):
 
 	def test_embed_texts_count_mismatch_throws(self):
 		response = _embedding_response([[1.0]])
-		with patch("litellm.embedding", return_value=response):
+		with patch("litellm.embedding", return_value=response):  # noqa: SIM117
 			with self.assertRaisesRegex(frappe.ValidationError, "2 inputs"):
 				embed_texts(["a", "b"])
 
 	def test_embed_provider_error_surfaces_as_validation_error(self):
-		with patch("litellm.embedding", side_effect=RuntimeError("invalid api key")):
+		with patch("litellm.embedding", side_effect=RuntimeError("invalid api key")):  # noqa: SIM117
 			with self.assertRaisesRegex(frappe.ValidationError, "invalid api key"):
 				embed_texts(["a"])
 

@@ -317,7 +317,7 @@ class TestResumeRun(IntegrationTestCase):
 	def test_resume_failure_marks_run_failed(self):
 		run_name = self._pause(agent=self.agent.name)
 
-		with patch.object(Model, "chat", side_effect=RuntimeError("boom")):
+		with patch.object(Model, "chat", side_effect=RuntimeError("boom")):  # noqa: SIM117
 			with self.assertRaises(RuntimeError):
 				resume_run(run_name, {"c1": "use a different approach"})
 
@@ -429,9 +429,25 @@ class TestStartRunSessions(IntegrationTestCase):
 
 		self.assertEqual(first["status"], "Paused")
 
-		with patch.object(Model, "chat", return_value=_final()):
+		with patch.object(Model, "chat", return_value=_final()):  # noqa: SIM117
 			with self.assertRaisesRegex(frappe.ValidationError, "paused"):
 				start_run("nevermind", session=first["session"])
+
+
+def _ensure_user(email: str) -> str:
+	if frappe.db.exists("User", email):
+		return email
+	user = frappe.get_doc(
+		{
+			"doctype": "User",
+			"email": email,
+			"first_name": email.split("@")[0],
+			"send_welcome_email": 0,
+			"enabled": 1,
+		}
+	)
+	user.insert(ignore_permissions=True)
+	return email
 
 
 class TestStartRunSecurity(IntegrationTestCase):
@@ -601,22 +617,6 @@ class TestAttachFile(IntegrationTestCase):
 		file_doc = self._file(file_name="data.bin", content="x")
 		with self.assertRaisesRegex(frappe.ValidationError, "Unsupported file type"):
 			attach_file(file_doc.name)
-
-
-def _ensure_user(email: str) -> str:
-	if frappe.db.exists("User", email):
-		return email
-	user = frappe.get_doc(
-		{
-			"doctype": "User",
-			"email": email,
-			"first_name": email.split("@")[0],
-			"send_welcome_email": 0,
-			"enabled": 1,
-		}
-	)
-	user.insert(ignore_permissions=True)
-	return email
 
 
 class TestParseAttachments(IntegrationTestCase):
@@ -842,7 +842,6 @@ class TestMemoryRunProvenance(IntegrationTestCase):
 		def boom(self, messages, tools=None, *, stream=False):
 			raise RuntimeError("kaboom")
 
-		with patch.object(Model, "chat", new=boom):
-			with self.assertRaises(RuntimeError):
-				start_run("go", agent=self.agent.name)
+		with patch.object(Model, "chat", new=boom), self.assertRaises(RuntimeError):
+			start_run("go", agent=self.agent.name)
 		self.assertIsNone(frappe.flags.get("flow_run"))

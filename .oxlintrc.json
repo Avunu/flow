@@ -1,0 +1,179 @@
+{
+	"$schema": "./node_modules/oxlint/configuration_schema.json",
+	"plugins": ["typescript", "unicorn", "oxc", "import"],
+	"categories": {
+		"correctness": "error",
+		"suspicious": "error",
+		"perf": "warn",
+		"pedantic": "off"
+	},
+	"env": {
+		"builtin": true,
+		"es2024": true,
+		"browser": true
+	},
+	"rules": {
+		"typescript/no-explicit-any": "error",
+		"typescript/ban-ts-comment": "error",
+		"typescript/consistent-type-imports": "error",
+		"no-console": [
+			"warn",
+			{
+				"allow": ["error", "warn"]
+			}
+		],
+		"import/no-cycle": "off",
+		"no-underscore-dangle": "off",
+		"unicorn/consistent-function-scoping": "off",
+		"unicorn/no-array-sort": "off"
+	},
+	"ignorePatterns": [
+		"flow/public/dist/**",
+		".frappe-nix/**",
+		".dev-dist/**",
+		"nix/**",
+		"docs-site/**",
+		"types/doctypes.d.ts"
+	],
+	"overrides": [
+		{
+			"files": ["scripts/**", "marketplace/**", "ci/**", "test/**"],
+			"env": {
+				"node": true
+			},
+			"rules": {
+				"no-console": "off",
+				"no-await-in-loop": "off",
+				"import/no-unassigned-import": "off"
+			}
+		},
+		{
+			"files": ["flow/public/js/*.bundle.ts", "flow/public/js/*.bundle.js"],
+			"rules": {
+				"import/no-unassigned-import": "off"
+			}
+		},
+		{
+			"files": ["vite.config.js"],
+			"rules": {
+				"import/no-unassigned-import": "off"
+			}
+		},
+		{
+			"files": [
+				"flow/flow/doctype/flow_agent/flow_agent.js",
+				"flow/flow/doctype/flow_agent_knowledge_base/flow_agent_knowledge_base.js",
+				"flow/flow/doctype/flow_agent_tool/flow_agent_tool.js",
+				"flow/flow/doctype/flow_knowledge_base/flow_knowledge_base.js",
+				"flow/flow/doctype/flow_knowledge_chunk/flow_knowledge_chunk.js",
+				"flow/flow/doctype/flow_knowledge_settings/flow_knowledge_settings.js",
+				"flow/flow/doctype/flow_knowledge_source/flow_knowledge_source.js",
+				"flow/flow/doctype/flow_model/flow_model.js",
+				"flow/flow/doctype/flow_provider/flow_provider.js",
+				"flow/flow/doctype/flow_run/flow_run.js",
+				"flow/flow/doctype/flow_session/flow_session.js",
+				"flow/flow/doctype/flow_session_message/flow_session_message.js",
+				"flow/flow/doctype/flow_tool/flow_tool.js",
+				"flow/flow/doctype/flow_trigger/flow_trigger.js"
+			],
+			"globals": {
+				"$": "readonly",
+				"AMEND": "readonly",
+				"CANCEL": "readonly",
+				"CREATE": "readonly",
+				"DELETE": "readonly",
+				"DOWN_ARROW": "readonly",
+				"DataTable": "readonly",
+				"NEWLINE": "readonly",
+				"READ": "readonly",
+				"SUBMIT": "readonly",
+				"SetVueGlobals": "readonly",
+				"TAB": "readonly",
+				"UP_ARROW": "readonly",
+				"WRITE": "readonly",
+				"__": "readonly",
+				"_round": "readonly",
+				"cint": "readonly",
+				"comment_when": "readonly",
+				"convert_old_to_new_number_format": "readonly",
+				"copy_dict": "readonly",
+				"cstr": "readonly",
+				"cur_dialog": "readonly",
+				"cur_frm": "readonly",
+				"cur_list": "readonly",
+				"cur_page": "readonly",
+				"erpnext": "readonly",
+				"extend_cscript": "readonly",
+				"flt": "readonly",
+				"fmt_money": "readonly",
+				"format_currency": "readonly",
+				"format_number": "readonly",
+				"frappe": "readonly",
+				"get_currency_symbol": "readonly",
+				"get_number_format": "readonly",
+				"get_number_format_info": "readonly",
+				"get_url_arg": "readonly",
+				"get_url_dict": "readonly",
+				"has_common": "readonly",
+				"has_words": "readonly",
+				"hide_field": "readonly",
+				"in_list": "readonly",
+				"is_null": "readonly",
+				"jQuery": "readonly",
+				"locals": "readonly",
+				"lstrip": "readonly",
+				"msgprint": "readonly",
+				"nth": "readonly",
+				"open_url_post": "readonly",
+				"precision": "readonly",
+				"refresh_field": "readonly",
+				"refresh_many": "readonly",
+				"remainder": "readonly",
+				"repl": "readonly",
+				"replace_all": "readonly",
+				"roundNumber": "readonly",
+				"round_based_on_smallest_currency_fraction": "readonly",
+				"rstrip": "readonly",
+				"set_field_options": "readonly",
+				"strip": "readonly",
+				"strip_html": "readonly",
+				"strip_number_groups": "readonly",
+				"toTitle": "readonly",
+				"toggle_field": "readonly",
+				"unhide_field": "readonly",
+				"validate_email": "readonly",
+				"validate_name": "readonly",
+				"validate_phone": "readonly",
+				"validate_url": "readonly",
+				"moment": "readonly"
+			}
+		},
+		{
+			"files": ["frontend/src/main.js"],
+			"rules": {
+				"import/no-unassigned-import": "off",
+				"eslint/no-unused-expressions": "off"
+			}
+		},
+		{
+			"files": ["frontend/src/store.js"],
+			"rules": {
+				"eslint/no-shadow": "off",
+				"unicorn/no-array-reverse": "off",
+				"oxc/no-map-spread": "off"
+			}
+		},
+		{
+			"files": ["frontend/src/components/MarkdownText.vue"],
+			"rules": {
+				"unicorn/no-useless-spread": "off"
+			}
+		},
+		{
+			"files": ["frontend/src/api/stream.js"],
+			"rules": {
+				"eslint/no-await-in-loop": "off"
+			}
+		}
+	]
+}

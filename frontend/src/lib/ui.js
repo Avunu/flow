@@ -1,3 +1,6 @@
+// Copyright (c) 2026, Shrihari Mahabal and contributors
+// For license information, please see license.txt
+
 // Single import point for the frappe-ui components used by the panel. They are
 // pulled from source (aliased in vite.config.js) and tree-shaken into the bundle.
 export { default as Button } from "frappe-ui/src/components/Button/Button.vue";

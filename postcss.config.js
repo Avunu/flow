@@ -1,3 +1,6 @@
+// Copyright (c) 2026, Shrihari Mahabal and contributors
+// For license information, please see license.txt
+
 import tailwindcss from "tailwindcss";
 import autoprefixer from "autoprefixer";
 import prefixSelector from "postcss-prefix-selector";
@@ -21,10 +24,9 @@ export default {
 				if (selector === ":root") return prefix;
 				// `[data-theme="dark"] …` → applies when the panel root is dark
 				// (its data-theme is synced to the desk in main.js).
-				if (/^\[data-theme/.test(selector)) return `${prefix}${selector}`;
+				if (selector.startsWith("[data-theme")) return `${prefix}${selector}`;
 				// Document-level selectors collapse onto the panel root.
-				if (selector === "html" || selector === "body" || selector === ":host")
-					return prefix;
+				if (selector === "html" || selector === "body" || selector === ":host") return prefix;
 				return prefixedSelector;
 			},
 		}),

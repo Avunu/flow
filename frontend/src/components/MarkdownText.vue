@@ -16,20 +16,10 @@ let last = 0;
 // Tags markdown itself produces; anything else is dropped or unwrapped to text.
 const ALLOWED = new Set(
 	"P,BR,HR,H1,H2,H3,H4,H5,H6,UL,OL,LI,BLOCKQUOTE,PRE,CODE,EM,STRONG,DEL,TABLE,THEAD,TBODY,TR,TH,TD,A,IMG".split(
-		","
-	)
+		",",
+	),
 );
-const DROPPED = new Set([
-	"SCRIPT",
-	"STYLE",
-	"IFRAME",
-	"OBJECT",
-	"EMBED",
-	"FORM",
-	"LINK",
-	"META",
-	"BASE",
-]);
+const DROPPED = new Set(["SCRIPT", "STYLE", "IFRAME", "OBJECT", "EMBED", "FORM", "LINK", "META", "BASE"]);
 // Leading "/" allows same-origin paths but not "//host" (protocol-relative → external).
 const SAFE_URL = /^(https?:|mailto:|#|\/(?!\/))/i;
 
@@ -94,7 +84,7 @@ function schedule() {
 }
 
 function escapeHtml(s) {
-	return s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+	return s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
 }
 
 watch(() => props.part.text, schedule, { immediate: true });

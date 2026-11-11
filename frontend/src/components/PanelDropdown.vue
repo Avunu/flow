@@ -70,12 +70,7 @@ watch(open, async (v) => {
 				:class="align === 'right' ? 'right-0' : 'left-0'"
 				:style="shift ? { transform: `translateX(${shift}px)` } : null"
 			>
-				<SearchInput
-					v-if="showSearch"
-					v-model="query"
-					:placeholder="__('Search…')"
-					autofocus
-				/>
+				<SearchInput v-if="showSearch" v-model="query" :placeholder="__('Search…')" autofocus />
 				<div class="max-h-80 overflow-y-auto p-1.5 space-y-0.5">
 					<button
 						v-for="item in filtered"
@@ -91,10 +86,7 @@ watch(open, async (v) => {
 							class="h-4 w-4 shrink-0 text-ink-gray-7"
 						/>
 					</button>
-					<div
-						v-if="!filtered.length"
-						class="px-3 py-4 text-center text-xs text-ink-gray-5"
-					>
+					<div v-if="!filtered.length" class="px-3 py-4 text-center text-xs text-ink-gray-5">
 						{{ __("No matches") }}
 					</div>
 				</div>

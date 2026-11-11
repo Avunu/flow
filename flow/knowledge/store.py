@@ -83,6 +83,24 @@ def ensure_table_for_dimension(dimension: int):
 	return db.create_table(TABLE_NAME, schema=schema, exist_ok=True)
 
 
+def _open_table():
+	db = _connect()
+	if TABLE_NAME not in db.list_tables().tables:
+		frappe.throw(
+			_("Knowledge store is not initialized. Configure Flow Knowledge Settings and ingest a source."),
+			title=_("Knowledge Store Not Ready"),
+		)
+	return db.open_table(TABLE_NAME)
+
+
+def _ensure_fts_index(table) -> None:
+	"""Create the full-text index once. LanceDB's native FTS automatically
+	searches rows added after index creation, so no reindexing on write."""
+	if any(str(index.index_type) == "FTS" for index in table.list_indices()):
+		return
+	table.create_fts_index(FTS_FIELD, replace=True)
+
+
 def add(rows: list[dict[str, Any]]) -> None:
 	"""Insert rows of {id, kb, source, content, vector}. The table must already exist."""
 	if not rows:
@@ -90,6 +108,14 @@ def add(rows: list[dict[str, Any]]) -> None:
 	table = _open_table()
 	table.add(rows)
 	_ensure_fts_index(table)
+
+
+def _quote(value: str) -> str:
+	"""Quote a string for a LanceDB SQL predicate (single quotes doubled)."""
+	if not isinstance(value, str):
+		raise ValueError(f"Expected string filter value, got {type(value).__name__}")
+	escaped = value.replace("'", "''")
+	return f"'{escaped}'"
 
 
 def delete(*, kb: str | None = None, source: str | None = None, ids: list[int] | None = None) -> None:
@@ -157,29 +183,3 @@ def drop_table() -> None:
 	db = _connect()
 	if TABLE_NAME in db.list_tables().tables:
 		db.drop_table(TABLE_NAME)
-
-
-def _open_table():
-	db = _connect()
-	if TABLE_NAME not in db.list_tables().tables:
-		frappe.throw(
-			_("Knowledge store is not initialized. Configure Flow Knowledge Settings and ingest a source."),
-			title=_("Knowledge Store Not Ready"),
-		)
-	return db.open_table(TABLE_NAME)
-
-
-def _ensure_fts_index(table) -> None:
-	"""Create the full-text index once. LanceDB's native FTS automatically
-	searches rows added after index creation, so no reindexing on write."""
-	if any(str(index.index_type) == "FTS" for index in table.list_indices()):
-		return
-	table.create_fts_index(FTS_FIELD, replace=True)
-
-
-def _quote(value: str) -> str:
-	"""Quote a string for a LanceDB SQL predicate (single quotes doubled)."""
-	if not isinstance(value, str):
-		raise ValueError(f"Expected string filter value, got {type(value).__name__}")
-	escaped = value.replace("'", "''")
-	return f"'{escaped}'"

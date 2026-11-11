@@ -1,3 +1,6 @@
+// Copyright (c) 2026, Shrihari Mahabal and contributors
+// For license information, please see license.txt
+
 import { __ } from "@/lib/translate";
 
 // Read-only data fetches over the desk's whitelisted client API.
@@ -34,8 +37,7 @@ export const searchSessions = (query) =>
 		limit: 20,
 	});
 
-export const getSession = (name) =>
-	frappe.xcall("frappe.client.get", { doctype: "Flow Session", name });
+export const getSession = (name) => frappe.xcall("frappe.client.get", { doctype: "Flow Session", name });
 
 export const getPausedRun = (session) =>
 	getList("Flow Run", {
@@ -54,19 +56,19 @@ export const getRunFeedback = (session) =>
 	});
 
 // Record thumbs feedback on a run; optionally store a Down comment as agent memory.
-export const submitFeedback = (args) => frappe.xcall("flow.api.submit_feedback", args);
+export const submitFeedback = (args) => frappe.xcall("flow.api.submit_feedback", args); // frappe-vulture:ignore
 
 // Fail any Running run left behind by a stream that was cut off (refresh/navigation),
 // so a reloaded session isn't blocked from starting the next turn.
-export const recoverSession = (session) => frappe.xcall("flow.api.recover_session", { session });
+export const recoverSession = (session) => frappe.xcall("flow.api.recover_session", { session }); // frappe-vulture:ignore
 
 // Stop a run at the user's request: finalize an aborted stream's run or terminate a
 // paused run so the agent won't continue.
-export const stopRun = (run_name) => frappe.xcall("flow.api.stop_run", { run_name });
+export const stopRun = (run_name) => frappe.xcall("flow.api.stop_run", { run_name }); // frappe-vulture:ignore
 
 // Map of the agent's tool slugs → requires_confirmation, so the panel can tell an
 // approval tool call from an inline one.
-export const getAgentTools = (agent) => frappe.xcall("flow.api.get_agent_tools", { agent });
+export const getAgentTools = (agent) => frappe.xcall("flow.api.get_agent_tools", { agent }); // frappe-vulture:ignore
 
 // Upload a file as private, returning the created File doc. The chat attachment
 // flow needs the File name to stage it via attachFile.
@@ -87,7 +89,7 @@ export async function uploadFile(file) {
 
 // Validate and stage an uploaded File for use as a chat attachment. Returns chip
 // metadata; throws (unsupported type, unreadable, …) which surfaces on the chip.
-export const attachFile = (file) => frappe.xcall("flow.api.attach_file", { file });
+export const attachFile = (file) => frappe.xcall("flow.api.attach_file", { file }); // frappe-vulture:ignore
 
 // Extract the human-readable message from a frappe error body.
 export function serverMessage(data) {

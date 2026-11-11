@@ -1,3 +1,6 @@
+// Copyright (c) 2026, Shrihari Mahabal and contributors
+// For license information, please see license.txt
+
 import frappeUIPreset from "frappe-ui/tailwind";
 
 /** @type {import('tailwindcss').Config} */
@@ -17,23 +20,14 @@ export default {
 	theme: {
 		extend: {
 			fontSize: {
-				"2xs": [
-					"12px",
-					{ lineHeight: "1.15", letterSpacing: "0.01em", fontWeight: "420" },
-				],
+				"2xs": ["12px", { lineHeight: "1.15", letterSpacing: "0.01em", fontWeight: "420" }],
 				xs: ["13px", { lineHeight: "1.15", letterSpacing: "0.02em", fontWeight: "420" }],
 				sm: ["14px", { lineHeight: "1.15", letterSpacing: "0.02em", fontWeight: "420" }],
 				base: ["15px", { lineHeight: "1.15", letterSpacing: "0.02em", fontWeight: "420" }],
 				lg: ["17px", { lineHeight: "1.15", letterSpacing: "0.02em", fontWeight: "400" }],
 				xl: ["19px", { lineHeight: "1.15", letterSpacing: "0.01em", fontWeight: "400" }],
-				"2xl": [
-					"21px",
-					{ lineHeight: "1.15", letterSpacing: "0.01em", fontWeight: "400" },
-				],
-				"3xl": [
-					"25px",
-					{ lineHeight: "1.15", letterSpacing: "0.005em", fontWeight: "400" },
-				],
+				"2xl": ["21px", { lineHeight: "1.15", letterSpacing: "0.01em", fontWeight: "400" }],
+				"3xl": ["25px", { lineHeight: "1.15", letterSpacing: "0.005em", fontWeight: "400" }],
 			},
 		},
 	},
