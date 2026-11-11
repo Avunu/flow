@@ -10,24 +10,10 @@ app_license = "agpl-3.0"
 
 export_python_type_annotations = True
 
-# Vite-built (frontend/src) AI panel bundle. Served directly from public/ — the
-# /assets path bypasses the desk's esbuild pipeline. Run `yarn build` in the app root.
-# /assets URLs get no cache-busting query from Frappe, so append ?v=<mtime>:
-# the stable filename keeps the hook simple while a rebuild invalidates the cache.
-import os as _os  # noqa: E402
-
-
-def _flow_panel_asset(filename: str) -> str:
-	path = _os.path.join(_os.path.dirname(__file__), "public", "flow_panel", filename)
-	try:
-		version = int(_os.path.getmtime(path))
-	except OSError:
-		version = 0
-	return f"/assets/flow/flow_panel/{filename}?v={version}"
-
-
-app_include_js = [_flow_panel_asset("flow_panel.js")]
-app_include_css = [_flow_panel_asset("flow_panel.css")]
+# The Vite-built (frontend/src) AI panel bundle: `yarn build` writes flow_panel.bundle.[hash].js and .css
+# to public/dist/ and registers them in assets.json (scripts/vite-register.mjs), so the desk loads them by name.
+app_include_js = ["flow_panel.bundle.js"]
+app_include_css = ["flow_panel.bundle.css"]
 
 doc_events = {
 	"*": {
