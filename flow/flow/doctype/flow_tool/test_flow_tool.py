@@ -1,10 +1,12 @@
 # Copyright (c) 2026, Frappe Technologies and Contributors
 # See license.txt
 
-from typing import Any
+from typing import Any, cast
 
 import frappe
 from frappe.tests import IntegrationTestCase
+
+from flow.flow.doctype.flow_tool.flow_tool import FlowTool
 
 EXTRA_TEST_RECORD_DEPENDENCIES = []
 IGNORE_TEST_RECORD_DEPENDENCIES = []
@@ -42,12 +44,12 @@ class IntegrationTestFlowTool(IntegrationTestCase):
 		frappe.db.rollback()
 
 	def test_module_tool_creates_successfully(self):
-		doc = frappe.get_doc(_module()).insert()
+		doc = cast(FlowTool, frappe.get_doc(_module())).insert()
 		self.assertEqual(doc.name, "get_weather")
 		self.assertEqual(doc.type, "Imported")
 
 	def test_script_tool_creates_successfully(self):
-		doc = frappe.get_doc(_script()).insert()
+		doc = cast(FlowTool, frappe.get_doc(_script())).insert()
 		self.assertEqual(doc.name, "script_weather")
 		self.assertEqual(doc.type, "Script")
 
@@ -106,7 +108,7 @@ class TestFlowToolSystemGenerated(IntegrationTestCase):
 		frappe.db.rollback()
 
 	def _tool(self):
-		return frappe.get_doc(_module(is_system_generated=1)).insert()
+		return cast(FlowTool, frappe.get_doc(_module(is_system_generated=1))).insert()
 
 	def test_cannot_delete_via_desk(self):
 		tool = self._tool()

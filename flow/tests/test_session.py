@@ -2,14 +2,17 @@
 # License: MIT. See LICENSE
 
 import json
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 import frappe
 from frappe.tests import IntegrationTestCase
 
+from flow.flow.doctype.flow_agent.flow_agent import FlowAgent
+from flow.flow.doctype.flow_model.flow_model import FlowModel
+from flow.flow.doctype.flow_session.flow_session import FlowSession
 from flow.lib.agent import Agent
 from flow.lib.model import ChatResponse, Model
 from flow.lib.session import load_session, new_session
@@ -37,7 +40,7 @@ class TestCodeAgentSession(IntegrationTestCase):
 
 		self.assertEqual(run.status, "Completed")
 		self.assertEqual(run.output, "hi")
-		self.assertIsNone(frappe.get_doc("Flow Session", run.session).agent)
+		self.assertIsNone(cast(FlowSession, frappe.get_doc("Flow Session", run.session)).agent)
 
 	def test_code_agent_snapshot_uses_model_id(self):
 		with patch.object(Model, "chat", return_value=_final()):
@@ -75,47 +78,67 @@ class TestCodeAgentSession(IntegrationTestCase):
 
 	def test_doctype_agent_new_session_links_agent(self):
 		sync_builtin_tools()
-		model = frappe.get_doc(
-			{"doctype": "Flow Model", "title": "Sess Model", "model_id": "openai/gpt-4o-mini", "enabled": 1}
+		model = cast(
+			FlowModel,
+			frappe.get_doc(
+				{
+					"doctype": "Flow Model",
+					"title": "Sess Model",
+					"model_id": "openai/gpt-4o-mini",
+					"enabled": 1,
+				}
+			),
 		).insert()
-		agent_doc = frappe.get_doc(
-			{
-				"doctype": "Flow Agent",
-				"title": "Sess Agent",
-				"model": model.name,
-				"instructions": "x",
-				"enabled": 1,
-			}
+		agent_doc = cast(
+			FlowAgent,
+			frappe.get_doc(
+				{
+					"doctype": "Flow Agent",
+					"title": "Sess Agent",
+					"model": model.name,
+					"instructions": "x",
+					"enabled": 1,
+				}
+			),
 		).insert()
 
 		with patch.object(Model, "chat", return_value=_final()):
 			run = agent_doc.new_session().chat("hello")
 
-		self.assertEqual(frappe.get_doc("Flow Session", run.session).agent, agent_doc.name)
+		self.assertEqual(cast(FlowSession, frappe.get_doc("Flow Session", run.session)).agent, agent_doc.name)
 
 
 class TestSessionModelOverride(IntegrationTestCase):
 	def setUp(self):
 		sync_builtin_tools()
-		self.model_a = frappe.get_doc(
-			{
-				"doctype": "Flow Model",
-				"title": "Override Base",
-				"model_id": "openai/gpt-4o-mini",
-				"enabled": 1,
-			}
+		self.model_a = cast(
+			FlowModel,
+			frappe.get_doc(
+				{
+					"doctype": "Flow Model",
+					"title": "Override Base",
+					"model_id": "openai/gpt-4o-mini",
+					"enabled": 1,
+				}
+			),
 		).insert()
-		self.model_b = frappe.get_doc(
-			{"doctype": "Flow Model", "title": "Override Alt", "model_id": "openai/gpt-4o", "enabled": 1}
+		self.model_b = cast(
+			FlowModel,
+			frappe.get_doc(
+				{"doctype": "Flow Model", "title": "Override Alt", "model_id": "openai/gpt-4o", "enabled": 1}
+			),
 		).insert()
-		self.agent_doc = frappe.get_doc(
-			{
-				"doctype": "Flow Agent",
-				"title": "Override Agent",
-				"model": self.model_a.name,
-				"instructions": "x",
-				"enabled": 1,
-			}
+		self.agent_doc = cast(
+			FlowAgent,
+			frappe.get_doc(
+				{
+					"doctype": "Flow Agent",
+					"title": "Override Agent",
+					"model": self.model_a.name,
+					"instructions": "x",
+					"enabled": 1,
+				}
+			),
 		).insert()
 
 	def tearDown(self):
@@ -127,20 +150,20 @@ class TestSessionModelOverride(IntegrationTestCase):
 
 		with patch.object(Model, "chat", return_value=_final()):
 			run = convo.chat("hi")
-		self.assertEqual(json.loads(run.config_snapshot)["model"], self.model_b.name)
+		self.assertEqual(json.loads(run.config_snapshot or "")["model"], self.model_b.name)
 
 	def test_load_session_switches_model_override(self):
 		convo = new_session(self.agent_doc)  # uses the agent's default model
 		with patch.object(Model, "chat", return_value=_final()):
 			first = convo.chat("hi")
-		self.assertEqual(json.loads(first.config_snapshot)["model"], self.model_a.name)
+		self.assertEqual(json.loads(first.config_snapshot or "")["model"], self.model_a.name)
 
-		switched = load_session(convo.name, model=self.model_b.name)
+		switched = load_session(str(convo.name), model=self.model_b.name)
 		self.assertEqual(switched.model, self.model_b.name)
 
 		with patch.object(Model, "chat", return_value=_final()):
 			second = switched.chat("again")
-		self.assertEqual(json.loads(second.config_snapshot)["model"], self.model_b.name)
+		self.assertEqual(json.loads(second.config_snapshot or "")["model"], self.model_b.name)
 
 
 class TestChatCommitBoundaries(IntegrationTestCase):
@@ -151,17 +174,28 @@ class TestChatCommitBoundaries(IntegrationTestCase):
 
 	def setUp(self):
 		sync_builtin_tools()
-		model = frappe.get_doc(
-			{"doctype": "Flow Model", "title": "Commit Model", "model_id": "openai/gpt-4o-mini", "enabled": 1}
+		model = cast(
+			FlowModel,
+			frappe.get_doc(
+				{
+					"doctype": "Flow Model",
+					"title": "Commit Model",
+					"model_id": "openai/gpt-4o-mini",
+					"enabled": 1,
+				}
+			),
 		).insert()
-		self.agent_doc = frappe.get_doc(
-			{
-				"doctype": "Flow Agent",
-				"title": "Commit Agent",
-				"model": model.name,
-				"instructions": "x",
-				"enabled": 1,
-			}
+		self.agent_doc = cast(
+			FlowAgent,
+			frappe.get_doc(
+				{
+					"doctype": "Flow Agent",
+					"title": "Commit Agent",
+					"model": model.name,
+					"instructions": "x",
+					"enabled": 1,
+				}
+			),
 		).insert()
 		self.session = new_session(self.agent_doc)
 		self.events: list[tuple[str, str | None]] = []
@@ -170,7 +204,7 @@ class TestChatCommitBoundaries(IntegrationTestCase):
 		frappe.db.rollback()
 
 	@contextmanager
-	def _outside_tests(self) -> Iterator[None]:
+	def _outside_tests(self) -> Generator[None]:
 		frappe.flags.in_test = False
 		try:
 			yield

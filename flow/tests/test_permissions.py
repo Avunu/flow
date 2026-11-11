@@ -1,8 +1,13 @@
 # Copyright (c) 2026, Frappe Technologies and contributors
 # License: MIT. See LICENSE
 
+from typing import cast
+
 import frappe
 from frappe.tests import IntegrationTestCase
+
+from flow.flow.doctype.flow_run.flow_run import FlowRun
+from flow.flow.doctype.flow_session.flow_session import FlowSession
 
 DESK_USER = "flow-perm-desk@example.com"
 OTHER_DESK_USER = "flow-perm-other@example.com"
@@ -50,7 +55,7 @@ class TestDeskUserAccess(IntegrationTestCase):
 
 	def test_desk_user_manages_only_own_sessions(self):
 		frappe.set_user(self.desk)
-		session = frappe.get_doc({"doctype": "Flow Session", "title": "mine"}).insert()
+		session = cast(FlowSession, frappe.get_doc({"doctype": "Flow Session", "title": "mine"})).insert()
 
 		for ptype in ("read", "write", "delete"):
 			self.assertTrue(frappe.has_permission(session, ptype, user=self.desk), ptype)
@@ -58,9 +63,12 @@ class TestDeskUserAccess(IntegrationTestCase):
 
 	def test_desk_user_reads_only_own_runs(self):
 		frappe.set_user(self.desk)
-		session = frappe.get_doc({"doctype": "Flow Session", "title": "mine"}).insert()
-		run = frappe.get_doc(
-			{"doctype": "Flow Run", "source": "Manual", "status": "Running", "session": session.name}
+		session = cast(FlowSession, frappe.get_doc({"doctype": "Flow Session", "title": "mine"})).insert()
+		run = cast(
+			FlowRun,
+			frappe.get_doc(
+				{"doctype": "Flow Run", "source": "Manual", "status": "Running", "session": session.name}
+			),
 		).insert(ignore_permissions=True)
 
 		self.assertTrue(frappe.has_permission(run, "read", user=self.desk))

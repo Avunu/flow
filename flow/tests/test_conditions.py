@@ -1,8 +1,12 @@
 # Copyright (c) 2026, Frappe Technologies and contributors
 # License: MIT. See LICENSE
 
+from typing import cast
+
 import frappe
+from frappe.desk.doctype.todo.todo import ToDo
 from frappe.tests import IntegrationTestCase
+from frappe.tests.classes.context_managers import enable_safe_exec
 
 from flow.utils.conditions import evaluate_condition, validate_condition
 
@@ -39,7 +43,7 @@ class TestEvaluateCondition(IntegrationTestCase):
 	@classmethod
 	def setUpClass(cls):
 		super().setUpClass()
-		cls.enterClassContext(cls.enable_safe_exec())
+		cls.enterClassContext(enable_safe_exec())
 
 	def tearDown(self):
 		frappe.db.rollback()
@@ -55,7 +59,9 @@ class TestEvaluateCondition(IntegrationTestCase):
 		self.assertFalse(evaluate_condition(script, {"doc": frappe._dict(description="a b")}))
 
 	def test_condition_can_query_db(self):
-		todo = frappe.get_doc({"doctype": "ToDo", "description": "db check", "status": "Closed"}).insert()
+		todo = cast(
+			ToDo, frappe.get_doc({"doctype": "ToDo", "description": "db check", "status": "Closed"})
+		).insert()
 		condition = 'frappe.db.get_value("ToDo", doc.name, "status") == "Closed"'
 		self.assertTrue(evaluate_condition(condition, {"doc": frappe._dict(name=todo.name)}))
 

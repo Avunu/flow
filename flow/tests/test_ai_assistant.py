@@ -1,6 +1,8 @@
 # Copyright (c) 2026, Frappe Technologies and contributors
 # License: MIT. See LICENSE
 
+from typing import cast
+
 import frappe
 from frappe.tests import IntegrationTestCase
 
@@ -9,6 +11,8 @@ from flow.assistant import (
 	ASSISTANT_INSTRUCTIONS,
 	sync_builtin_assistant,
 )
+from flow.flow.doctype.flow_agent.flow_agent import FlowAgent
+from flow.flow.doctype.flow_model.flow_model import FlowModel
 from flow.tools.builtins import BUILTIN_TOOLS
 
 
@@ -18,13 +22,16 @@ class TestSyncBuiltinAssistant(IntegrationTestCase):
 		if frappe.db.exists("Flow Agent", ASSISTANT_AGENT_TITLE):
 			frappe.db.set_value("Flow Agent", ASSISTANT_AGENT_TITLE, "is_system_generated", 0)
 			frappe.delete_doc("Flow Agent", ASSISTANT_AGENT_TITLE, ignore_permissions=True)
-		self.model = frappe.get_doc(
-			{
-				"doctype": "Flow Model",
-				"title": "Assistant Test Model",
-				"model_id": "openai/gpt-4o-mini",
-				"enabled": 1,
-			}
+		self.model = cast(
+			FlowModel,
+			frappe.get_doc(
+				{
+					"doctype": "Flow Model",
+					"title": "Assistant Test Model",
+					"model_id": "openai/gpt-4o-mini",
+					"enabled": 1,
+				}
+			),
 		).insert()
 
 	def tearDown(self):
@@ -32,7 +39,7 @@ class TestSyncBuiltinAssistant(IntegrationTestCase):
 
 	def test_model_insert_auto_creates_assistant(self):
 		# Model setUp insert triggers after_insert → sync_builtin_assistant.
-		doc = frappe.get_doc("Flow Agent", ASSISTANT_AGENT_TITLE)
+		doc = cast(FlowAgent, frappe.get_doc("Flow Agent", ASSISTANT_AGENT_TITLE))
 
 		self.assertEqual(doc.model, self.model.name)
 		self.assertEqual(doc.instructions, ASSISTANT_INSTRUCTIONS)
@@ -43,13 +50,13 @@ class TestSyncBuiltinAssistant(IntegrationTestCase):
 
 	def test_sync_updates_instructions_on_existing_system_agent(self):
 		# sync_builtin_assistant should overwrite instructions on a system-generated agent.
-		original = frappe.get_doc("Flow Agent", ASSISTANT_AGENT_TITLE)
+		original = cast(FlowAgent, frappe.get_doc("Flow Agent", ASSISTANT_AGENT_TITLE))
 		original.instructions = "stale instructions"
 		original.save(ignore_permissions=True)
 
 		sync_builtin_assistant(model=self.model.name)
 
-		doc = frappe.get_doc("Flow Agent", ASSISTANT_AGENT_TITLE)
+		doc = cast(FlowAgent, frappe.get_doc("Flow Agent", ASSISTANT_AGENT_TITLE))
 		self.assertEqual(doc.instructions, ASSISTANT_INSTRUCTIONS)
 
 	def test_sync_is_noop_for_user_owned_agent(self):
@@ -59,7 +66,7 @@ class TestSyncBuiltinAssistant(IntegrationTestCase):
 
 		sync_builtin_assistant(model=self.model.name)
 
-		doc = frappe.get_doc("Flow Agent", ASSISTANT_AGENT_TITLE)
+		doc = cast(FlowAgent, frappe.get_doc("Flow Agent", ASSISTANT_AGENT_TITLE))
 		self.assertEqual(doc.instructions, "user customised")
 
 	def test_assistant_cannot_be_deleted(self):
