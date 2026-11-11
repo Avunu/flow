@@ -240,6 +240,10 @@ declare global {
 			api_key?: string | null;
 			/** Base URL · Data */
 			base_url?: string | null;
+			/** Account ID · Data */
+			account_id?: string | null;
+			/** Gateway ID · Data */
+			gateway_id?: string | null;
 			/** Extra Params · JSON */
 			extra_params?: unknown;
 		}
