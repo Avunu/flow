@@ -105,3 +105,21 @@ whitelist = ["frappe.*"]
 # leaves them alone.
 [tool.frappe-nix.js.oxfmt]
 ignore = ["**/*.html"]
+
+# Findings in the existing Vue panel that have no safe autofix. Each is a small rewrite
+# (or a deliberate choice) left for a later change, so the rules are off for just that file.
+[[tool.frappe-nix.js.oxlint.overrides]]
+files = ["frontend/src/main.js"]
+rules = { "import/no-unassigned-import" = "off", "eslint/no-unused-expressions" = "off" }
+
+[[tool.frappe-nix.js.oxlint.overrides]]
+files = ["frontend/src/store.js"]
+rules = { "eslint/no-shadow" = "off", "unicorn/no-array-reverse" = "off", "oxc/no-map-spread" = "off" }
+
+[[tool.frappe-nix.js.oxlint.overrides]]
+files = ["frontend/src/components/MarkdownText.vue"]
+rules = { "unicorn/no-useless-spread" = "off" }
+
+[[tool.frappe-nix.js.oxlint.overrides]]
+files = ["frontend/src/api/stream.js"]
+rules = { "eslint/no-await-in-loop" = "off" }
