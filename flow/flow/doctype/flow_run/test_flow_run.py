@@ -294,26 +294,26 @@ class TestStreamWithPersistence(IntegrationTestCase):
 
 	def setUp(self):
 		session = _new_session(_make_agent())
-		self.run = create_run(source="Manual", input="hi", session=session)
+		self.flow_run = create_run(source="Manual", input="hi", session=session)
 
 	def tearDown(self):
 		frappe.flags.flow_run = None
 		frappe.db.rollback()
 
 	def _stored(self) -> FlowRun:
-		return frappe.get_doc("Flow Run", self.run.name)
+		return frappe.get_doc("Flow Run", self.flow_run.name)
 
 	def test_done_completes_the_run(self):
-		events = list(stream_with_persistence(_stream(TextChunk("a"), Done(_completed_result())), self.run))
+		events = list(stream_with_persistence(_stream(TextChunk("a"), Done(_completed_result())), self.flow_run))
 
 		self.assertIsInstance(events[0], RunStarted)
-		self.assertEqual(events[0].name, self.run.name)
+		self.assertEqual(events[0].name, self.flow_run.name)
 		self.assertIsInstance(events[-1], Done)
 		self.assertEqual(self._stored().status, "Completed")
 		self.assertEqual(self._stored().output, "all done")
 
 	def test_raised_error_fails_the_run_and_is_emitted(self):
-		events = list(stream_with_persistence(_stream(then=RuntimeError("model blew up")), self.run))
+		events = list(stream_with_persistence(_stream(then=RuntimeError("model blew up")), self.flow_run))
 
 		self.assertIsInstance(events[-1], Error)
 		self.assertEqual(events[-1].message, "model blew up")
@@ -322,14 +322,14 @@ class TestStreamWithPersistence(IntegrationTestCase):
 		self.assertEqual(stored.error, "model blew up")
 
 	def test_stream_ending_without_done_fails_the_run(self):
-		list(stream_with_persistence(_stream(TextChunk("a")), self.run))
+		list(stream_with_persistence(_stream(TextChunk("a")), self.flow_run))
 
 		stored = self._stored()
 		self.assertEqual(stored.status, "Failed")
 		self.assertEqual(stored.error, "Stream interrupted")
 
 	def test_closing_the_stream_early_fails_the_run(self):
-		stream = stream_with_persistence(_stream(TextChunk("a"), TextChunk("b")), self.run)
+		stream = stream_with_persistence(_stream(TextChunk("a"), TextChunk("b")), self.flow_run)
 		next(stream)  # RunStarted
 		next(stream)  # first chunk
 		stream.close()  # the client went away
@@ -340,21 +340,21 @@ class TestStreamWithPersistence(IntegrationTestCase):
 
 	def test_result_that_cannot_be_applied_fails_the_run(self):
 		with patch.object(FlowRun, "apply_result", side_effect=RuntimeError("cannot save")):
-			list(stream_with_persistence(_stream(Done(_completed_result())), self.run))
+			list(stream_with_persistence(_stream(Done(_completed_result())), self.flow_run))
 
 		stored = self._stored()
 		self.assertEqual(stored.status, "Failed")
 		self.assertEqual(stored.error, "cannot save")
 
 	def test_clears_the_active_run_flag(self):
-		frappe.flags.flow_run = self.run.name
-		list(stream_with_persistence(_stream(Done(_completed_result())), self.run))
+		frappe.flags.flow_run = self.flow_run.name
+		list(stream_with_persistence(_stream(Done(_completed_result())), self.flow_run))
 		self.assertIsNone(frappe.flags.flow_run)
 
 	def test_outcome_is_deferred_to_commit_after_response(self):
 		scheduled: list[Callable[[], None]] = []
 		with patch("flow.flow.doctype.flow_run.flow_run.commit_after_response", side_effect=scheduled.append):
-			list(stream_with_persistence(_stream(Done(_completed_result())), self.run))
+			list(stream_with_persistence(_stream(Done(_completed_result())), self.flow_run))
 
 			# Nothing is written while the response body is still open...
 			self.assertEqual(len(scheduled), 1)
@@ -371,7 +371,7 @@ class TestStreamWithPersistence(IntegrationTestCase):
 			patch.object(frappe.local, "request", request, create=True),
 			patch.object(frappe.db, "commit") as commit,
 		):
-			list(stream_with_persistence(_stream(Done(_completed_result())), self.run))
+			list(stream_with_persistence(_stream(Done(_completed_result())), self.flow_run))
 			commit.assert_not_called()
 			self.assertEqual(self._stored().status, "Running")
 
