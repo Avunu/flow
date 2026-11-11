@@ -1,3 +1,6 @@
+// Copyright (c) 2026, Shrihari Mahabal and contributors
+// For license information, please see license.txt
+
 import "./scripts/vue-sfc-typescript.mjs";
 import { fileURLToPath, URL } from "node:url";
 import vue from "@vitejs/plugin-vue";

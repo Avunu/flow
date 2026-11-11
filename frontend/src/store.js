@@ -1,3 +1,6 @@
+// Copyright (c) 2026, Shrihari Mahabal and contributors
+// For license information, please see license.txt
+
 import { ref, computed } from "vue";
 import * as api from "@/api/client";
 import { startRun, resumeRun } from "@/api/stream";

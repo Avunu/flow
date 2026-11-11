@@ -1,3 +1,6 @@
+# Copyright (c) 2026, Shrihari Mahabal and contributors
+# For license information, please see license.txt
+
 from flow.lib.agent import Agent, RunResult
 from flow.lib.model import ChatResponse, Model, ToolCall
 from flow.lib.tool import Tool, build_schema, tool

@@ -1,3 +1,6 @@
+# Copyright (c) 2026, Shrihari Mahabal and contributors
+# For license information, please see license.txt
+
 import frappe
 
 # Client tools introduced by the reverted frontend-tooling feature. Their import paths no longer

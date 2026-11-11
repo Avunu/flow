@@ -1,3 +1,6 @@
+# Copyright (c) 2026, Shrihari Mahabal and contributors
+# For license information, please see license.txt
+
 app_name = "flow"
 app_title = "Flow"
 app_publisher = "Shrihari Mahabal"

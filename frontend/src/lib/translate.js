@@ -1,3 +1,6 @@
+// Copyright (c) 2026, Shrihari Mahabal and contributors
+// For license information, please see license.txt
+
 // Thin wrapper over the desk's global translator so components can stay
 // translatable without depending on it being present (e.g. in isolation).
 export function __(message, args) {

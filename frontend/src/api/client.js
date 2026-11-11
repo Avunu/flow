@@ -1,3 +1,6 @@
+// Copyright (c) 2026, Shrihari Mahabal and contributors
+// For license information, please see license.txt
+
 import { __ } from "@/lib/translate";
 
 // Read-only data fetches over the desk's whitelisted client API.

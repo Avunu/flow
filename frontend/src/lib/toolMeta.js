@@ -1,3 +1,6 @@
+// Copyright (c) 2026, Shrihari Mahabal and contributors
+// For license information, please see license.txt
+
 // Tool name/args → plain-English labels, context, and value-shape helpers.
 import { __ } from "@/lib/translate";
 

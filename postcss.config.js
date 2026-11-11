@@ -1,3 +1,6 @@
+// Copyright (c) 2026, Shrihari Mahabal and contributors
+// For license information, please see license.txt
+
 import tailwindcss from "tailwindcss";
 import autoprefixer from "autoprefixer";
 import prefixSelector from "postcss-prefix-selector";
