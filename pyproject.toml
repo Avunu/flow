@@ -7,19 +7,19 @@ readme = "README.md"
 license = "AGPL-3.0-or-later"
 dynamic = ["version"]
 dependencies = [
-	"beautifulsoup4>=4.13.5,<5",
-	"chardet>=5.2,<6",
-	"croniter>=6,<7",
+	"beautifulsoup4>=4.12,<5",
+	"chardet>=5,<6",
+	"croniter>=6",
 	"lancedb>=0.41,<1",
 	"litellm>=1.109,<2",
 	"onnxruntime>=1.31,<2",
-	"openpyxl>=3.1.5,<4",
+	"openpyxl>=3.1,<4",
 	"pdfplumber>=0.11.10,<1",
-	"pyarrow>=25,<26",
-	"pydantic>=2.12.5,<3",
+	"pyarrow>=23",
+	"pydantic>=2.7,<3",
 	"python-docx>=1.2,<2",
 	"rapidocr>=3.10,<4",
-	"requests>=2.33,<3",
+	"requests>=2.32,<3",
 ]
 
 [build-system]
@@ -31,8 +31,8 @@ frappe = ">=16.0.0,<17.0.0"
 
 # These dependencies are only installed when developer mode is enabled
 [tool.bench.dev-dependencies]
-pillow = ">=13,<14"
-pypdf = ">=6.21.4,<7"
+pillow = ">=11"
+pypdf = ">=6,<7"
 
 # These apt dependencies will be installed from Ubuntu repositories when you host your app on Frappe Cloud
 [deploy.dependencies.apt]

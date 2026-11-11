@@ -48,6 +48,13 @@ class FlowTrigger(Document):
 				_("Run As must be an enabled user."),
 				title=_("Invalid Run As"),
 			)
+		# The agent, its models and its runs are readable by desk users only, so a user without the
+		# Desk User role (a website user) could not run the agent when the trigger fires.
+		if "Desk User" not in frappe.get_roles(self.run_as):
+			frappe.throw(
+				_("Run As must be a desk user (a user with the Desk User role)."),
+				title=_("Invalid Run As"),
+			)
 
 	def _validate_event_fields(self):
 		if self.event == "DocType Event":

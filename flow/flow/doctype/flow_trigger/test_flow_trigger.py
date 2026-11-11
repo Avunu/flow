@@ -356,6 +356,24 @@ class TestFlowTriggerIdentity(IntegrationTestCase):
 			triggers.fire(trig.name, target_doctype="ToDo", target_name=self.todo.name)
 		return seen[0]
 
+	def test_run_as_must_be_a_desk_user(self):
+		website_user = (
+			frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": "trigger-website@example.com",
+					"first_name": "Website",
+					"send_welcome_email": 0,
+				}
+			)
+			.insert(ignore_permissions=True)
+			.name
+		)
+		self.assertNotIn("Desk User", frappe.get_roles(website_user))
+
+		with self.assertRaisesRegex(frappe.ValidationError, "desk user"):
+			frappe.get_doc(_trigger(str(self.agent.name), run_as=website_user)).insert()
+
 	def test_fire_runs_as_run_as_user(self):
 		trig = cast(FlowTrigger, frappe.get_doc(_trigger(str(self.agent.name), run_as=self.user))).insert()
 

@@ -760,19 +760,19 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "beautifulsoup4", specifier = ">=4.13.5,<5" },
-    { name = "chardet", specifier = ">=5.2,<6" },
-    { name = "croniter", specifier = ">=6,<7" },
+    { name = "beautifulsoup4", specifier = ">=4.12,<5" },
+    { name = "chardet", specifier = ">=5,<6" },
+    { name = "croniter", specifier = ">=6" },
     { name = "lancedb", specifier = ">=0.41,<1" },
     { name = "litellm", specifier = ">=1.109,<2" },
     { name = "onnxruntime", specifier = ">=1.31,<2" },
-    { name = "openpyxl", specifier = ">=3.1.5,<4" },
+    { name = "openpyxl", specifier = ">=3.1,<4" },
     { name = "pdfplumber", specifier = ">=0.11.10,<1" },
-    { name = "pyarrow", specifier = ">=25,<26" },
-    { name = "pydantic", specifier = ">=2.12.5,<3" },
+    { name = "pyarrow", specifier = ">=23" },
+    { name = "pydantic", specifier = ">=2.7,<3" },
     { name = "python-docx", specifier = ">=1.2,<2" },
     { name = "rapidocr", specifier = ">=3.10,<4" },
-    { name = "requests", specifier = ">=2.33,<3" },
+    { name = "requests", specifier = ">=2.32,<3" },
 ]
 
 [[package]]
@@ -816,9 +816,9 @@ bench-dev = [
     { name = "faker", specifier = "~=18.10.1" },
     { name = "freezegun", specifier = "~=1.5.5" },
     { name = "hypothesis", specifier = "~=6.77.0" },
-    { name = "pillow", specifier = ">=13,<14" },
+    { name = "pillow", specifier = ">=11" },
     { name = "pyngrok", specifier = "~=7.5.0" },
-    { name = "pypdf", specifier = ">=6.21.4,<7" },
+    { name = "pypdf", specifier = ">=6,<7" },
     { name = "spdx-tools", specifier = "~=0.8.5" },
     { name = "watchdog", specifier = "~=6.0.0" },
 ]
