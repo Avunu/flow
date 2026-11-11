@@ -9,6 +9,9 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
+from flow.lib import cloudflare
+from flow.lib.model import provider_of, resolve_call_kwargs
+
 # The model part may start with one `@` for Cloudflare Workers AI ids such as `@cf/zai-org/glm-5.3-flash`.
 MODEL_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_\-]*\/@?[A-Za-z0-9][A-Za-z0-9_\-:.\/]*$")
 
@@ -43,6 +46,7 @@ class FlowModel(Document):
 		self._validate_base_url()
 		self._validate_params()
 		self._validate_provider_known()
+		self._validate_cloudflare()
 		self._resolve_context_window()
 
 	def after_insert(self):
@@ -123,6 +127,43 @@ class FlowModel(Document):
 		except Exception as e:
 			frappe.throw(str(e)[:500], title=_("Invalid Model ID"))
 
+	def _validate_cloudflare(self):
+		provider = provider_of(self.model_id)
+		model_part = self.model_id.partition("/")[2]
+		if provider != cloudflare.PROVIDER:
+			# The old workaround (`openai/@cf/...` plus a per-model URL and key). Only enforced on a new or
+			# changed id, so a row that has not been migrated yet can still be edited.
+			if cloudflare.is_hosted_model(model_part) and (
+				self.is_new() or self.has_value_changed("model_id")
+			):
+				frappe.throw(
+					_(
+						"Workers AI models use the Cloudflare provider: set Provider to <code>cloudflare</code>."
+					),
+					title=_("Invalid Model ID"),
+				)
+			return
+
+		if not cloudflare.is_hosted_model(cloudflare.strip_provider(self.model_id)):
+			frappe.throw(
+				_(
+					"Only Cloudflare-hosted models are supported, with an id like <code>@cf/zai-org/glm-5.3-flash</code>."
+				),
+				title=_("Invalid Model ID"),
+			)
+		if self.api_key or self.base_url:
+			frappe.throw(
+				_("Configure the endpoint and API token once on the Cloudflare provider, not on the model."),
+				title=_("Invalid Model"),
+			)
+		if self.enabled and not frappe.db.get_value("Flow Provider", cloudflare.PROVIDER, "enabled"):
+			frappe.throw(
+				_("Set up and enable the cloudflare Flow Provider first."),
+				title=_("Cloudflare Not Configured"),
+			)
+		if self.params:
+			cloudflare.validate_extra_headers(json.loads(self.params).get("extra_headers"))
+
 	@frappe.whitelist()
 	def test_connection(self):
 		self.check_permission("write")
@@ -135,26 +176,20 @@ class FlowModel(Document):
 				title=_("Missing Dependency"),
 			)
 
-		from flow.lib.model import resolve_provider_credentials
-
-		provider_creds = resolve_provider_credentials(self.model_id)
-		api_key = self.get_password("api_key", raise_exception=False) or provider_creds.get("api_key") or None
-		base_url = self.base_url or provider_creds.get("base_url")
-
-		kwargs = {
-			"model": self.model_id,
-			"api_key": api_key,
-			"messages": [{"role": "user", "content": "ping"}],
-			"max_tokens": 1,
-			"timeout": 15,
-		}
-		if base_url:
-			kwargs["api_base"] = base_url
-
+		secret = None
 		try:
-			litellm.completion(**kwargs)
+			kwargs = resolve_call_kwargs(
+				self.model_id,
+				api_key=self.get_password("api_key", raise_exception=False),
+				base_url=self.base_url,
+			)
+			secret = kwargs.get("api_key")
+			litellm.completion(
+				**kwargs, messages=[{"role": "user", "content": "ping"}], max_tokens=1, timeout=15
+			)
 		except Exception as e:
-			frappe.throw(str(e)[:500] or type(e).__name__, title=_(type(e).__name__))
+			# Request details can echo the credentials, so scrub them from what the user sees.
+			frappe.throw(cloudflare.explain_error(e, secret), title=_(type(e).__name__))
 
 		return {"ok": True, "message": _("Connection OK")}
 

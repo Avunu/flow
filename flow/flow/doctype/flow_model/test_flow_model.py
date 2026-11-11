@@ -13,6 +13,7 @@ from flow.flow.doctype.flow_model.flow_model import (
 	_detect_context_window,
 	get_provider_models,
 )
+from flow.tests.cloudflare_mock import provider_row
 
 
 def _model(**overrides: Any) -> dict:
@@ -77,11 +78,19 @@ class TestFlowModelValidation(IntegrationTestCase):
 				self.assertTrue(MODEL_ID_PATTERN.match(good))
 
 	def test_model_id_pattern_rejects_other_at_signs(self):
-		for bad in ("cloudflare/@", "cloudflare/", "cloudflare/@@cf/x", "cloudflare/x@cf", "@cf/x", "cloudflare/ @cf/x"):
+		for bad in (
+			"cloudflare/@",
+			"cloudflare/",
+			"cloudflare/@@cf/x",
+			"cloudflare/x@cf",
+			"@cf/x",
+			"cloudflare/ @cf/x",
+		):
 			with self.subTest(model_id=bad):
 				self.assertIsNone(MODEL_ID_PATTERN.match(bad))
 
 	def test_cloudflare_model_id_validates_and_saves(self):
+		frappe.get_doc(provider_row()).insert()
 		doc = cast(
 			FlowModel,
 			frappe.get_doc(_model(title="Cloudflare Id", model_id="cloudflare/@cf/zai-org/glm-5.3-flash")),
@@ -300,11 +309,15 @@ class TestTestConnection(IntegrationTestCase):
 
 	def test_falls_back_to_the_providers_credentials(self):
 		keyless = cast(FlowModel, frappe.get_doc(_model(title="Keyless Model"))).insert()
-		creds = {"api_key": "sk-provider-key", "base_url": "https://provider.example.com"}
-		with (
-			patch("flow.lib.model.resolve_provider_credentials", return_value=creds),
-			patch("litellm.completion") as completion,
-		):
+		frappe.get_doc(
+			{
+				"doctype": "Flow Provider",
+				"provider": "openai",
+				"api_key": "sk-provider-key",
+				"base_url": "https://provider.example.com",
+			}
+		).insert()
+		with patch("litellm.completion") as completion:
 			keyless.test_connection()
 
 		kwargs = completion.call_args.kwargs

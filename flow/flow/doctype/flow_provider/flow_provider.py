@@ -8,6 +8,8 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
+from flow.lib import cloudflare
+
 # Keys litellm derives itself or that have dedicated fields — not allowed in extra_params.
 RESERVED_PARAM_KEYS = frozenset(
 	{"model", "api_key", "api_base", "base_url", "messages", "stream", "tools", "tool_choice"}
@@ -23,10 +25,12 @@ class FlowProvider(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		account_id: DF.Data | None
 		api_key: DF.Password | None
 		base_url: DF.Data | None
 		enabled: DF.Check
 		extra_params: DF.JSON | None
+		gateway_id: DF.Data | None
 		provider: DF.Data
 	# end: auto-generated types
 
@@ -41,11 +45,16 @@ class FlowProvider(Document):
 		self._validate_provider_known()
 		self._validate_base_url()
 		self._validate_extra_params()
+		self._validate_cloudflare()
 
 	def _normalize(self):
 		self.provider = (self.provider or "").strip().lower()
-		if isinstance(self.base_url, str):
-			self.base_url = self.base_url.strip()
+		for field in ("base_url", "account_id", "gateway_id"):
+			value = self.get(field)
+			if isinstance(value, str):
+				self.set(field, value.strip())
+		if self.account_id:
+			self.account_id = self.account_id.lower()
 		if isinstance(self.api_key, str):
 			self.api_key = self.api_key.strip()
 
@@ -84,4 +93,28 @@ class FlowProvider(Document):
 			frappe.throw(
 				_("Extra Params may not include reserved keys: {0}.").format(", ".join(conflicting)),
 				title=_("Reserved Params"),
+			)
+
+	def _validate_cloudflare(self):
+		if self.provider != cloudflare.PROVIDER:
+			if self.account_id or self.gateway_id:
+				frappe.throw(
+					_("Account ID and Gateway ID only apply to the cloudflare provider."),
+					title=_("Invalid Provider"),
+				)
+			return
+
+		if not self.account_id:
+			frappe.throw(
+				_("Account ID is required for the cloudflare provider."), title=_("Missing Account ID")
+			)
+		cloudflare.validate_account_id(self.account_id)
+		cloudflare.validate_gateway_id(self.gateway_id)
+		cloudflare.check_base_url(self.base_url)
+		if self.extra_params:
+			cloudflare.validate_extra_headers(json.loads(self.extra_params).get("extra_headers"))
+		# The doc value is masked after the first save, so ask for the stored password.
+		if self.enabled and not self.get_password("api_key", raise_exception=False):
+			frappe.throw(
+				_("An API token is required for the cloudflare provider."), title=_("Missing API Token")
 			)

@@ -1,0 +1,65 @@
+{
+ "data": [
+  {
+   "id": "@cf/zai-org/glm-5.3-flash",
+   "hugging_face_id": "zai-org/glm-5.3-flash",
+   "name": "Z.ai: Glm 5.3 Flash",
+   "created": 1787754102,
+   "input_modalities": [
+    "text",
+    "image"
+   ],
+   "output_modalities": [
+    "text"
+   ],
+   "context_length": 1048576,
+   "max_output_length": 1048576,
+   "pricing": {
+    "prompt": "0.0000001500",
+    "completion": "0.0000005000",
+    "input_cache_read": "0.0000000300"
+   },
+   "supported_sampling_parameters": [
+    "temperature",
+    "top_p",
+    "top_k",
+    "min_p",
+    "frequency_penalty",
+    "presence_penalty",
+    "repetition_penalty",
+    "stop",
+    "seed",
+    "max_tokens",
+    "logit_bias"
+   ],
+   "supported_features": [
+    "structured_outputs",
+    "json_mode",
+    "tools",
+    "reasoning"
+   ],
+   "openrouter": {
+    "slug": "cloudflare/zai-org/glm-5.3-flash"
+   },
+   "description": "The first natively multimodal model in the GLM-5 series. With 320B total parameters and just 18B active parameters, it outperforms GLM-5.2 across benchmarks and real-world workloads at one-tenth the price, while approaching Claude Opus 4.8 on coding and agentic benchmarks.",
+   "deprecation_date": "2026-11-20",
+   "reasoning": {
+    "supported_efforts": [
+     "max",
+     "high",
+     "low"
+    ],
+    "default_effort": "max",
+    "normalizes_to": {
+     "none": "max",
+     "minimal": "max",
+     "medium": "max",
+     "xhigh": "max",
+     "null": "max"
+    },
+    "mandatory": true,
+    "default_enabled": true
+   }
+  }
+ ]
+}
