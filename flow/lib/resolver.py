@@ -32,15 +32,15 @@ _ARRAY_NAMES = frozenset(
 _OBJECT_NAMES = frozenset({"dict", "Dict", "Mapping"})
 
 
-def resolve_tool(doc: FlowTool, *, restrict_commit_rollback: bool = False) -> Tool:
-	"""Turn a Flow Tool row into a runtime Tool the Agent can call.
-
-	`restrict_commit_rollback` removes commit/rollback from a Script tool's sandbox,
-	so it cannot escape a surrounding test transaction.
-	"""
-	if doc.type == "Imported":
-		return _resolve_module(doc)
-	return _resolve_script(doc, restrict_commit_rollback=restrict_commit_rollback)
+def _build_tool(doc: FlowTool, parameters: dict[str, Any], func: Any, *, confirm_prompt: Any = None) -> Tool:
+	return Tool(
+		name=doc.slug,
+		description=doc.description,
+		parameters=parameters,
+		func=func,
+		requires_confirmation=bool(doc.requires_confirmation),
+		confirm_prompt=confirm_prompt,
+	)
 
 
 def _resolve_module(doc: FlowTool) -> Tool:
@@ -62,22 +62,6 @@ def _resolve_module(doc: FlowTool) -> Tool:
 	)
 
 
-def _resolve_script(doc: FlowTool, *, restrict_commit_rollback: bool = False) -> Tool:
-	runner = _make_script_runner(doc.code, doc.slug, restrict_commit_rollback=restrict_commit_rollback)
-	return _build_tool(doc, schema_from_code(doc.code), runner)
-
-
-def _build_tool(doc: FlowTool, parameters: dict[str, Any], func: Any, *, confirm_prompt: Any = None) -> Tool:
-	return Tool(
-		name=doc.slug,
-		description=doc.description,
-		parameters=parameters,
-		func=func,
-		requires_confirmation=bool(doc.requires_confirmation),
-		confirm_prompt=confirm_prompt,
-	)
-
-
 def _make_script_runner(code: str, slug: str, *, restrict_commit_rollback: bool = False):
 	"""Build a callable that runs a Script tool's `main` in the server-script sandbox."""
 
@@ -96,6 +80,52 @@ def _make_script_runner(code: str, slug: str, *, restrict_commit_rollback: bool 
 		return exec_globals.get(RESULT_VAR)
 
 	return run
+
+
+def _find_main(tree: ast.Module) -> ast.FunctionDef:
+	for node in tree.body:
+		if isinstance(node, ast.FunctionDef) and node.name == MAIN_FUNCTION_NAME:
+			return node
+	frappe.throw(_("Code must define a top-level <code>main</code> function."), title=_("Missing main()"))
+
+
+def _required_arg_names(args: ast.arguments) -> set[str]:
+	required: set[str] = set()
+	positional = args.posonlyargs + args.args
+	num_required = len(positional) - len(args.defaults)
+	for i, arg in enumerate(positional):
+		if i < num_required:
+			required.add(arg.arg)
+	for arg, default in zip(args.kwonlyargs, args.kw_defaults, strict=True):
+		if default is None:
+			required.add(arg.arg)
+	return required
+
+
+def _schema_by_name(name: str) -> dict[str, Any]:
+	if name in _PRIMITIVE_BY_NAME:
+		return dict(_PRIMITIVE_BY_NAME[name])
+	if name in _ARRAY_NAMES:
+		return {"type": "array"}
+	if name in _OBJECT_NAMES:
+		return {"type": "object"}
+	return {}
+
+
+def _annotation_schema(node: ast.expr | None) -> dict[str, Any]:
+	if node is None:
+		return {}
+	if isinstance(node, ast.Name):
+		return _schema_by_name(node.id)
+	if isinstance(node, ast.Attribute):
+		return _schema_by_name(node.attr)
+	if isinstance(node, ast.Constant):
+		return _schema_by_name(node.value) if isinstance(node.value, str) else {}
+	if isinstance(node, ast.Subscript):
+		return _subscript_schema(node)
+	if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+		return _union_schema([node.left, node.right])
+	return {}
 
 
 def schema_from_code(code: str) -> dict[str, Any]:
@@ -120,50 +150,54 @@ def schema_from_code(code: str) -> dict[str, Any]:
 	return schema
 
 
-def _find_main(tree: ast.Module) -> ast.FunctionDef:
-	for node in tree.body:
-		if isinstance(node, ast.FunctionDef) and node.name == MAIN_FUNCTION_NAME:
-			return node
-	frappe.throw(_("Code must define a top-level <code>main</code> function."), title=_("Missing main()"))
+def _resolve_script(doc: FlowTool, *, restrict_commit_rollback: bool = False) -> Tool:
+	runner = _make_script_runner(doc.code, doc.slug, restrict_commit_rollback=restrict_commit_rollback)
+	return _build_tool(doc, schema_from_code(doc.code), runner)
 
 
-def _required_arg_names(args: ast.arguments) -> set[str]:
-	required: set[str] = set()
-	positional = args.posonlyargs + args.args
-	num_required = len(positional) - len(args.defaults)
-	for i, arg in enumerate(positional):
-		if i < num_required:
-			required.add(arg.arg)
-	for arg, default in zip(args.kwonlyargs, args.kw_defaults, strict=True):
-		if default is None:
-			required.add(arg.arg)
-	return required
+def resolve_tool(doc: FlowTool, *, restrict_commit_rollback: bool = False) -> Tool:
+	"""Turn a Flow Tool row into a runtime Tool the Agent can call.
+
+	`restrict_commit_rollback` removes commit/rollback from a Script tool's sandbox,
+	so it cannot escape a surrounding test transaction.
+	"""
+	if doc.type == "Imported":
+		return _resolve_module(doc)
+	return _resolve_script(doc, restrict_commit_rollback=restrict_commit_rollback)
 
 
-def _annotation_schema(node: ast.expr | None) -> dict[str, Any]:
-	if node is None:
-		return {}
-	if isinstance(node, ast.Name):
-		return _schema_by_name(node.id)
-	if isinstance(node, ast.Attribute):
-		return _schema_by_name(node.attr)
+def _is_none(node: ast.expr) -> bool:
 	if isinstance(node, ast.Constant):
-		return _schema_by_name(node.value) if isinstance(node.value, str) else {}
-	if isinstance(node, ast.Subscript):
-		return _subscript_schema(node)
-	if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
-		return _union_schema([node.left, node.right])
-	return {}
+		return node.value is None
+	return isinstance(node, ast.Name) and node.id == "None"
 
 
-def _schema_by_name(name: str) -> dict[str, Any]:
-	if name in _PRIMITIVE_BY_NAME:
-		return dict(_PRIMITIVE_BY_NAME[name])
-	if name in _ARRAY_NAMES:
-		return {"type": "array"}
-	if name in _OBJECT_NAMES:
-		return {"type": "object"}
-	return {}
+def _union_schema(nodes: list[ast.expr]) -> dict[str, Any]:
+	schemas = [_annotation_schema(n) for n in nodes if not _is_none(n)]
+	if not schemas:
+		return {}
+	if len(schemas) == 1:
+		return schemas[0]
+	return {"anyOf": schemas}
+
+
+def _literal_schema(sliced: ast.expr) -> dict[str, Any]:
+	elts = sliced.elts if isinstance(sliced, ast.Tuple) else [sliced]
+	values = [e.value for e in elts if isinstance(e, ast.Constant)]
+	if not values:
+		return {}
+
+	schema: dict[str, Any] = {"enum": values}
+	value_types = {type(v) for v in values}
+	if value_types == {str}:
+		schema["type"] = "string"
+	elif value_types == {bool}:
+		schema["type"] = "boolean"
+	elif value_types <= {int}:
+		schema["type"] = "integer"
+	elif value_types <= {int, float}:
+		schema["type"] = "number"
+	return schema
 
 
 def _subscript_schema(node: ast.Subscript) -> dict[str, Any]:
@@ -189,40 +223,6 @@ def _subscript_schema(node: ast.Subscript) -> dict[str, Any]:
 	if base_name in _OBJECT_NAMES:
 		return {"type": "object"}
 	return {}
-
-
-def _union_schema(nodes: list[ast.expr]) -> dict[str, Any]:
-	schemas = [_annotation_schema(n) for n in nodes if not _is_none(n)]
-	if not schemas:
-		return {}
-	if len(schemas) == 1:
-		return schemas[0]
-	return {"anyOf": schemas}
-
-
-def _is_none(node: ast.expr) -> bool:
-	if isinstance(node, ast.Constant):
-		return node.value is None
-	return isinstance(node, ast.Name) and node.id == "None"
-
-
-def _literal_schema(sliced: ast.expr) -> dict[str, Any]:
-	elts = sliced.elts if isinstance(sliced, ast.Tuple) else [sliced]
-	values = [e.value for e in elts if isinstance(e, ast.Constant)]
-	if not values:
-		return {}
-
-	schema: dict[str, Any] = {"enum": values}
-	value_types = {type(v) for v in values}
-	if value_types == {str}:
-		schema["type"] = "string"
-	elif value_types == {bool}:
-		schema["type"] = "boolean"
-	elif value_types <= {int}:
-		schema["type"] = "integer"
-	elif value_types <= {int, float}:
-		schema["type"] = "number"
-	return schema
 
 
 def _annotated_schema(sliced: ast.expr) -> dict[str, Any]:

@@ -50,6 +50,10 @@ def ensure_table(dimension: int):
 	return db.create_table(TABLE_NAME, schema=schema, exist_ok=True)
 
 
+def _open_table():
+	return _connect().open_table(TABLE_NAME)
+
+
 def add(session: str, attachment: str, chunks: list[str], vectors: list[list[float]]) -> None:
 	"""Insert one attachment's chunks. The table must already exist (ensure_table)."""
 	if len(chunks) != len(vectors):
@@ -68,6 +72,10 @@ def add(session: str, attachment: str, chunks: list[str], vectors: list[list[flo
 	table = _open_table()
 	table.add(rows)
 	_ensure_fts_index(table)
+
+
+def _table_exists() -> bool:
+	return TABLE_NAME in _connect().list_tables().tables
 
 
 def search(
@@ -127,11 +135,3 @@ def drop_table() -> None:
 	db = _connect()
 	if TABLE_NAME in db.list_tables().tables:
 		db.drop_table(TABLE_NAME)
-
-
-def _table_exists() -> bool:
-	return TABLE_NAME in _connect().list_tables().tables
-
-
-def _open_table():
-	return _connect().open_table(TABLE_NAME)

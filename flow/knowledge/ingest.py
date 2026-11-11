@@ -54,44 +54,19 @@ def enqueue_reconciliation(source: str) -> None:
 	)
 
 
-def ingest_source(source: str, rebuild: bool = False) -> None:
-	"""Worker: bring a source's chunks in both stores up to date.
-
-	rebuild forces a full re-chunk of a DocType source (purge + reset watermark) so
-	new chunk settings apply to rows whose content is otherwise unchanged. Single-doc
-	sources rebuild on every run regardless."""
-	doc = frappe.get_doc("Flow Knowledge Source", source)
-	doc.db_set("status", "Processing", update_modified=False)
-	frappe.db.commit()
-
-	try:
-		settings = frappe.get_cached_doc("Flow Knowledge Settings")
-		if doc.source_type == "DocType":
-			if rebuild:
-				purge_source(doc.name)
-				doc.db_set("last_synced_at", None, update_modified=False)
-			_sync_doctype(doc, settings)
-		else:
-			_rebuild_single(doc, settings)
-	except Exception:
-		frappe.db.rollback()
-		_mark_failed(source)
-		raise
-
-	count = frappe.db.count(CHUNK_DOCTYPE, {"source": doc.name})
-	doc.db_set(
-		{"status": "Completed", "chunk_count": count, "error_log": None},
-		update_modified=False,
-	)
-	frappe.db.commit()
-
-
 def purge_source(source: str) -> None:
 	"""Remove a source's chunks from both stores. Safe to call repeatedly."""
 	from flow.knowledge import store
 
 	store.delete(source=source)
 	frappe.db.delete(CHUNK_DOCTYPE, {"source": source})
+
+
+def _chunk_params(doc, settings) -> tuple[int, int]:
+	"""Per-source chunk size/overlap, each falling back to the global default when 0."""
+	size = cint(doc.chunk_size) or cint(settings.chunk_size)
+	overlap = cint(doc.chunk_overlap) or cint(settings.chunk_overlap)
+	return size, overlap
 
 
 # --- single-document sources (Text / File / URL) -----------------------------
@@ -140,77 +115,6 @@ def _rebuild_single(doc, settings) -> None:
 	store.add(rows)
 
 
-# --- DocType sources (incremental) -------------------------------------------
-
-
-def _sync_doctype(doc, settings) -> None:
-	"""Watermark sweep: upsert changed rows (hash-gated), then remove rows that
-	were deleted or fell out of the filter since the last sweep."""
-	from flow.knowledge.extract import _parse_filters, resolve_content_fields
-
-	ref = doc.reference_doctype
-	meta = frappe.get_meta(ref)
-	fields = resolve_content_fields(meta, doc.content_fields)
-	user_filters = _parse_filters(doc.filters)
-	watermark = doc.last_synced_at
-	sweep_start = now_datetime()
-	first_run = not watermark
-
-	delta = {} if first_run else {"modified": [">", watermark]}
-	matched_refs: set[str] = set()
-	start = 0
-	while True:
-		page = frappe.get_all(
-			ref,
-			filters={**user_filters, **delta},
-			fields=["name", *fields],
-			order_by="modified asc, name asc",
-			limit_start=start,
-			limit_page_length=BATCH,
-		)
-		if not page:
-			break
-		_upsert_page(doc, settings, meta, fields, page, matched_refs, track_exits=not first_run)
-		start += BATCH
-		if len(page) < BATCH:
-			break
-
-	if not first_run:
-		_remove_stale(doc, ref, watermark, matched_refs)
-
-	doc.db_set("last_synced_at", sweep_start, update_modified=False)
-
-
-def _upsert_page(doc, settings, meta, fields, page, matched_refs, *, track_exits) -> None:
-	from flow.knowledge.extract import _row_to_text
-
-	to_embed = []  # (reference_name, content_hash, [pieces])
-	stale = []  # reference_names whose chunks must go (content changed or now empty)
-	for row in page:
-		name = row["name"]
-		if track_exits:
-			matched_refs.add(name)
-		existing = _existing_chunk_state(doc.name, name)
-		text = _row_to_text(row, fields, meta)
-		if not text:
-			if existing["ids"]:
-				stale.append(name)
-			continue
-		new_hash = _content_hash(text)
-		if existing["hash"] == new_hash:
-			continue
-		if existing["ids"]:
-			stale.append(name)
-		pieces = _chunk(text, doc, settings)
-		if pieces:
-			to_embed.append((name, new_hash, pieces))
-
-	if stale:
-		_purge_refs(doc.name, stale)
-	if to_embed:
-		_embed_and_insert(doc, settings, to_embed)
-
-
 def _embed_and_insert(doc, settings, to_embed) -> None:
 	from flow.knowledge import store
 	from flow.knowledge.embedder import embed_texts
@@ -252,23 +156,6 @@ def _embed_and_insert(doc, settings, to_embed) -> None:
 	store.add(rows)
 
 
-def _remove_stale(doc, ref, watermark, matched_refs) -> None:
-	touched = {
-		row["name"] for row in frappe.get_all(ref, filters={"modified": [">", watermark]}, fields=["name"])
-	}
-	exits = touched - matched_refs
-	deleted = set(
-		frappe.get_all(
-			"Deleted Document",
-			filters={"deleted_doctype": ref, "creation": [">", watermark]},
-			pluck="deleted_name",
-		)
-	)
-	to_remove = exits | deleted
-	if to_remove:
-		_purge_refs(doc.name, list(to_remove))
-
-
 def _existing_chunk_state(source, reference_name) -> dict:
 	rows = frappe.get_all(
 		CHUNK_DOCTYPE,
@@ -290,6 +177,159 @@ def _purge_refs(source, reference_names) -> None:
 		if ids:
 			store.delete(ids=ids)
 			frappe.db.delete(CHUNK_DOCTYPE, criterion)
+
+
+def _chunk(text, doc, settings) -> list[str]:
+	from flow.knowledge.chunker import chunk_text
+
+	size, overlap = _chunk_params(doc, settings)
+	return chunk_text(text, chunk_size=size, overlap=overlap)
+
+
+def _content_hash(text: str) -> str:
+	return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _upsert_page(doc, settings, meta, fields, page, matched_refs, *, track_exits) -> None:
+	from flow.knowledge.extract import _row_to_text
+
+	to_embed = []  # (reference_name, content_hash, [pieces])
+	stale = []  # reference_names whose chunks must go (content changed or now empty)
+	for row in page:
+		name = row["name"]
+		if track_exits:
+			matched_refs.add(name)
+		existing = _existing_chunk_state(doc.name, name)
+		text = _row_to_text(row, fields, meta)
+		if not text:
+			if existing["ids"]:
+				stale.append(name)
+			continue
+		new_hash = _content_hash(text)
+		if existing["hash"] == new_hash:
+			continue
+		if existing["ids"]:
+			stale.append(name)
+		pieces = _chunk(text, doc, settings)
+		if pieces:
+			to_embed.append((name, new_hash, pieces))
+
+	if stale:
+		_purge_refs(doc.name, stale)
+	if to_embed:
+		_embed_and_insert(doc, settings, to_embed)
+
+
+def _remove_stale(doc, ref, watermark, matched_refs) -> None:
+	touched = {
+		row["name"] for row in frappe.get_all(ref, filters={"modified": [">", watermark]}, fields=["name"])
+	}
+	exits = touched - matched_refs
+	deleted = set(
+		frappe.get_all(
+			"Deleted Document",
+			filters={"deleted_doctype": ref, "creation": [">", watermark]},
+			pluck="deleted_name",
+		)
+	)
+	to_remove = exits | deleted
+	if to_remove:
+		_purge_refs(doc.name, list(to_remove))
+
+
+# --- DocType sources (incremental) -------------------------------------------
+
+
+def _sync_doctype(doc, settings) -> None:
+	"""Watermark sweep: upsert changed rows (hash-gated), then remove rows that
+	were deleted or fell out of the filter since the last sweep."""
+	from flow.knowledge.extract import _parse_filters, resolve_content_fields
+
+	ref = doc.reference_doctype
+	meta = frappe.get_meta(ref)
+	fields = resolve_content_fields(meta, doc.content_fields)
+	user_filters = _parse_filters(doc.filters)
+	watermark = doc.last_synced_at
+	sweep_start = now_datetime()
+	first_run = not watermark
+
+	delta = {} if first_run else {"modified": [">", watermark]}
+	matched_refs: set[str] = set()
+	start = 0
+	while True:
+		page = frappe.get_all(
+			ref,
+			filters={**user_filters, **delta},
+			fields=["name", *fields],
+			order_by="modified asc, name asc",
+			limit_start=start,
+			limit_page_length=BATCH,
+		)
+		if not page:
+			break
+		_upsert_page(doc, settings, meta, fields, page, matched_refs, track_exits=not first_run)
+		start += BATCH
+		if len(page) < BATCH:
+			break
+
+	if not first_run:
+		_remove_stale(doc, ref, watermark, matched_refs)
+
+	doc.db_set("last_synced_at", sweep_start, update_modified=False)
+
+
+def _mark_failed(source: str) -> None:
+	error = frappe.get_traceback(with_context=True)
+	frappe.db.set_value(
+		"Flow Knowledge Source",
+		source,
+		{"status": "Failed", "error_log": error},
+		update_modified=False,
+	)
+	frappe.db.commit()
+
+
+def ingest_source(source: str, rebuild: bool = False) -> None:
+	"""Worker: bring a source's chunks in both stores up to date.
+
+	rebuild forces a full re-chunk of a DocType source (purge + reset watermark) so
+	new chunk settings apply to rows whose content is otherwise unchanged. Single-doc
+	sources rebuild on every run regardless."""
+	doc = frappe.get_doc("Flow Knowledge Source", source)
+	doc.db_set("status", "Processing", update_modified=False)
+	frappe.db.commit()
+
+	try:
+		settings = frappe.get_cached_doc("Flow Knowledge Settings")
+		if doc.source_type == "DocType":
+			if rebuild:
+				purge_source(doc.name)
+				doc.db_set("last_synced_at", None, update_modified=False)
+			_sync_doctype(doc, settings)
+		else:
+			_rebuild_single(doc, settings)
+	except Exception:
+		frappe.db.rollback()
+		_mark_failed(source)
+		raise
+
+	count = frappe.db.count(CHUNK_DOCTYPE, {"source": doc.name})
+	doc.db_set(
+		{"status": "Completed", "chunk_count": count, "error_log": None},
+		update_modified=False,
+	)
+	frappe.db.commit()
+
+
+def _existing_names(doctype: str, names: set[str]) -> set[str]:
+	"""Names from `names` that still exist as rows, fetched in bounded batches so a
+	huge indexed set never builds one oversized IN clause."""
+	found: set[str] = set()
+	ordered = list(names)
+	for start in range(0, len(ordered), BATCH):
+		batch = ordered[start : start + BATCH]
+		found.update(frappe.get_all(doctype, filters={"name": ["in", batch]}, pluck="name"))
+	return found
 
 
 # --- reconciliation (manual, full scan) --------------------------------------
@@ -315,43 +355,3 @@ def reconcile_source(source: str) -> None:
 		_purge_refs(source, orphaned)
 		count = frappe.db.count(CHUNK_DOCTYPE, {"source": source})
 		doc.db_set("chunk_count", count, update_modified=False)
-
-
-def _existing_names(doctype: str, names: set[str]) -> set[str]:
-	"""Names from `names` that still exist as rows, fetched in bounded batches so a
-	huge indexed set never builds one oversized IN clause."""
-	found: set[str] = set()
-	ordered = list(names)
-	for start in range(0, len(ordered), BATCH):
-		batch = ordered[start : start + BATCH]
-		found.update(frappe.get_all(doctype, filters={"name": ["in", batch]}, pluck="name"))
-	return found
-
-
-def _chunk(text, doc, settings) -> list[str]:
-	from flow.knowledge.chunker import chunk_text
-
-	size, overlap = _chunk_params(doc, settings)
-	return chunk_text(text, chunk_size=size, overlap=overlap)
-
-
-def _chunk_params(doc, settings) -> tuple[int, int]:
-	"""Per-source chunk size/overlap, each falling back to the global default when 0."""
-	size = cint(doc.chunk_size) or cint(settings.chunk_size)
-	overlap = cint(doc.chunk_overlap) or cint(settings.chunk_overlap)
-	return size, overlap
-
-
-def _content_hash(text: str) -> str:
-	return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def _mark_failed(source: str) -> None:
-	error = frappe.get_traceback(with_context=True)
-	frappe.db.set_value(
-		"Flow Knowledge Source",
-		source,
-		{"status": "Failed", "error_log": error},
-		update_modified=False,
-	)
-	frappe.db.commit()

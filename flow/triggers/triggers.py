@@ -14,6 +14,44 @@ if TYPE_CHECKING:
 DOC_EVENTS = frozenset({"after_insert", "on_update", "on_submit", "on_cancel", "on_trash"})
 
 
+def _doctype_triggers(target_doctype: str, doc_event: str) -> list:
+	return frappe.get_all(
+		"Flow Trigger",
+		filters={
+			"event": "DocType Event",
+			"target_doctype": target_doctype,
+			"doc_event": doc_event,
+			"enabled": 1,
+		},
+		fields=["name", "condition", "run_as", "owner"],
+	)
+
+
+def _eval_condition(condition: str, doc: Document) -> bool:
+	from frappe.utils.safe_exec import get_safe_globals
+
+	from flow.utils.conditions import evaluate_condition
+
+	context = {"doc": doc, "utils": get_safe_globals().get("frappe").get("utils")}
+	try:
+		return evaluate_condition(condition, context)
+	except Exception:
+		frappe.log_error(title="Flow Trigger condition eval failed")
+		return False
+
+
+def _passes_condition(trigger, doc: Document) -> bool:
+	"""Evaluate the pre-enqueue condition as the trigger's run identity (matching fire),
+	so a permission-sensitive condition doesn't silently under-fire for the low-privilege
+	user whose action triggered it."""
+	original_user = frappe.session.user
+	frappe.set_user(trigger.run_as or trigger.owner)
+	try:
+		return _eval_condition(trigger.condition, doc)
+	finally:
+		frappe.set_user(original_user)
+
+
 def dispatch(doc: Document, method: str | None = None) -> None:
 	"""doc_events hook: enqueue any matching DocType Event triggers."""
 	if method not in DOC_EVENTS:
@@ -96,41 +134,3 @@ def fire(
 		return run.name
 	finally:
 		frappe.set_user(original_user)
-
-
-def _doctype_triggers(target_doctype: str, doc_event: str) -> list:
-	return frappe.get_all(
-		"Flow Trigger",
-		filters={
-			"event": "DocType Event",
-			"target_doctype": target_doctype,
-			"doc_event": doc_event,
-			"enabled": 1,
-		},
-		fields=["name", "condition", "run_as", "owner"],
-	)
-
-
-def _passes_condition(trigger, doc: Document) -> bool:
-	"""Evaluate the pre-enqueue condition as the trigger's run identity (matching fire),
-	so a permission-sensitive condition doesn't silently under-fire for the low-privilege
-	user whose action triggered it."""
-	original_user = frappe.session.user
-	frappe.set_user(trigger.run_as or trigger.owner)
-	try:
-		return _eval_condition(trigger.condition, doc)
-	finally:
-		frappe.set_user(original_user)
-
-
-def _eval_condition(condition: str, doc: Document) -> bool:
-	from frappe.utils.safe_exec import get_safe_globals
-
-	from flow.utils.conditions import evaluate_condition
-
-	context = {"doc": doc, "utils": get_safe_globals().get("frappe").get("utils")}
-	try:
-		return evaluate_condition(condition, context)
-	except Exception:
-		frappe.log_error(title="Flow Trigger condition eval failed")
-		return False

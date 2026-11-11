@@ -19,22 +19,6 @@ DOCTYPE_RENAMES = {
 }
 
 
-def execute():
-	"""Rename the AI module and every AI doctype to Flow. Runs before model sync so the
-	renamed JSON syncs onto the existing tables instead of creating empty duplicates."""
-	if not frappe.db.exists("Module Def", "AI"):
-		return
-
-	# Renaming re-saves the doctypes; controllers are already on disk as flow_* while the DB
-	# still holds the AI names, so the export would fail. in_import skips it (as model sync does).
-	in_import = frappe.flags.in_import
-	frappe.flags.in_import = True
-	try:
-		_rename_ai_to_flow()
-	finally:
-		frappe.flags.in_import = in_import
-
-
 def _rename_ai_to_flow():
 	# ORM blocks renaming non-custom modules, so do it via SQL.
 	if not frappe.db.exists("Module Def", "Flow"):
@@ -58,3 +42,19 @@ def _rename_ai_to_flow():
 	for ws in ("Workspace", "Workspace Sidebar"):
 		if frappe.db.exists(ws, "AI"):
 			frappe.delete_doc(ws, "AI", force=True, ignore_permissions=True)
+
+
+def execute():
+	"""Rename the AI module and every AI doctype to Flow. Runs before model sync so the
+	renamed JSON syncs onto the existing tables instead of creating empty duplicates."""
+	if not frappe.db.exists("Module Def", "AI"):
+		return
+
+	# Renaming re-saves the doctypes; controllers are already on disk as flow_* while the DB
+	# still holds the AI names, so the export would fail. in_import skips it (as model sync does).
+	in_import = frappe.flags.in_import
+	frappe.flags.in_import = True
+	try:
+		_rename_ai_to_flow()
+	finally:
+		frappe.flags.in_import = in_import

@@ -49,6 +49,53 @@ def find_doctypes(search: str | None = None, module: str | None = None, limit: i
 	return [r for r in rows if frappe.has_permission(r["name"], "read")]
 
 
+def _workflow_actions(doc: Any) -> set[str]:
+	from frappe.model.workflow import get_transitions, get_workflow_name
+
+	if not get_workflow_name(doc.doctype):
+		return set()
+	try:
+		return {t.get("action") for t in get_transitions(doc) if t.get("action")}
+	except Exception:
+		return set()
+
+
+def _whitelisted_methods(doctype: str) -> list[str]:
+	"""Custom whitelisted controller methods (the app-specific form buttons), excluding base Document methods."""
+	from frappe.model.base_document import get_controller
+	from frappe.model.document import Document
+
+	try:
+		controller = get_controller(doctype)
+	except Exception:
+		return []
+	base = set(dir(Document))
+	methods = set()
+	for attr_name in dir(controller):
+		if attr_name.startswith("_") or attr_name in base:
+			continue
+		attr = getattr(controller, attr_name, None)
+		if callable(attr) and getattr(attr, "__func__", attr) in frappe.whitelisted:
+			methods.add(attr_name)
+	return sorted(methods)
+
+
+def _doc_actions(doc: Any, meta: Any) -> dict[str, Any]:
+	"""Actions the current user can run on this record: lifecycle, workflow, methods."""
+	lifecycle: list[str] = []
+	if getattr(meta, "is_submittable", 0):
+		lifecycle.append(_LIFECYCLE_BY_DOCSTATUS.get(int(doc.docstatus)))
+	if int(doc.docstatus) != 1 and frappe.has_permission(doc.doctype, "delete", doc.name):
+		lifecycle.append("delete")
+	if getattr(meta, "allow_rename", 0):
+		lifecycle.append("rename")
+	return {
+		"lifecycle": [a for a in lifecycle if a],
+		"workflow": sorted(_workflow_actions(doc)),
+		"methods": _whitelisted_methods(doc.doctype),
+	}
+
+
 @tool
 def describe(doctype: str, name: str | None = None) -> dict[str, Any]:
 	"""Inspect a DocType's fields and your permissions. Pass `name` to also get a record's available actions."""
@@ -112,19 +159,6 @@ most relevant chunks, each with its text, similarity score, and source. The know
 are fixed by the agent's configuration — you cannot choose, add, or widen them."""
 
 
-def bind_search_knowledge(kbs: list[str]) -> Tool:
-	"""Build a `search_knowledge` tool scoped to `kbs`. The model sees only `query`; the
-	knowledge bases come from the agent's config and cannot be chosen or widened. The
-	registered builtin binds an empty list, so an unbound call fails closed in `retrieve`."""
-
-	def search_knowledge(query: str) -> list[dict[str, Any]]:
-		from flow.knowledge.retriever import retrieve
-
-		return retrieve(query, kbs=kbs)
-
-	return tool(search_knowledge, description=_knowledge_search_description(kbs))
-
-
 def _knowledge_search_description(kbs: list[str]) -> str:
 	"""Append the bound knowledge bases' descriptions so the model knows what's searchable
 	and when to call the tool."""
@@ -139,6 +173,19 @@ def _knowledge_search_description(kbs: list[str]) -> str:
 	if not listed:
 		return _KNOWLEDGE_SEARCH_DESCRIPTION
 	return f"{_KNOWLEDGE_SEARCH_DESCRIPTION}\n\nThis agent's knowledge bases:\n{listed}"
+
+
+def bind_search_knowledge(kbs: list[str]) -> Tool:
+	"""Build a `search_knowledge` tool scoped to `kbs`. The model sees only `query`; the
+	knowledge bases come from the agent's config and cannot be chosen or widened. The
+	registered builtin binds an empty list, so an unbound call fails closed in `retrieve`."""
+
+	def search_knowledge(query: str) -> list[dict[str, Any]]:
+		from flow.knowledge.retriever import retrieve
+
+		return retrieve(query, kbs=kbs)
+
+	return tool(search_knowledge, description=_knowledge_search_description(kbs))
 
 
 search_knowledge = bind_search_knowledge([])
@@ -251,53 +298,6 @@ def _summarize_names(names: list[str] | None, limit: int = 6) -> str:
 	if len(names) > limit:
 		shown += f" … +{len(names) - limit} more"
 	return shown or "—"
-
-
-def _doc_actions(doc: Any, meta: Any) -> dict[str, Any]:
-	"""Actions the current user can run on this record: lifecycle, workflow, methods."""
-	lifecycle: list[str] = []
-	if getattr(meta, "is_submittable", 0):
-		lifecycle.append(_LIFECYCLE_BY_DOCSTATUS.get(int(doc.docstatus)))
-	if int(doc.docstatus) != 1 and frappe.has_permission(doc.doctype, "delete", doc.name):
-		lifecycle.append("delete")
-	if getattr(meta, "allow_rename", 0):
-		lifecycle.append("rename")
-	return {
-		"lifecycle": [a for a in lifecycle if a],
-		"workflow": sorted(_workflow_actions(doc)),
-		"methods": _whitelisted_methods(doc.doctype),
-	}
-
-
-def _workflow_actions(doc: Any) -> set[str]:
-	from frappe.model.workflow import get_transitions, get_workflow_name
-
-	if not get_workflow_name(doc.doctype):
-		return set()
-	try:
-		return {t.get("action") for t in get_transitions(doc) if t.get("action")}
-	except Exception:
-		return set()
-
-
-def _whitelisted_methods(doctype: str) -> list[str]:
-	"""Custom whitelisted controller methods (the app-specific form buttons), excluding base Document methods."""
-	from frappe.model.base_document import get_controller
-	from frappe.model.document import Document
-
-	try:
-		controller = get_controller(doctype)
-	except Exception:
-		return []
-	base = set(dir(Document))
-	methods = set()
-	for attr_name in dir(controller):
-		if attr_name.startswith("_") or attr_name in base:
-			continue
-		attr = getattr(controller, attr_name, None)
-		if callable(attr) and getattr(attr, "__func__", attr) in frappe.whitelisted:
-			methods.add(attr_name)
-	return sorted(methods)
 
 
 def _resolve_method(doc: Any, action: str) -> Any:

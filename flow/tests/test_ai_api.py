@@ -434,6 +434,22 @@ class TestStartRunSessions(IntegrationTestCase):
 				start_run("nevermind", session=first["session"])
 
 
+def _ensure_user(email: str) -> str:
+	if frappe.db.exists("User", email):
+		return email
+	user = frappe.get_doc(
+		{
+			"doctype": "User",
+			"email": email,
+			"first_name": email.split("@")[0],
+			"send_welcome_email": 0,
+			"enabled": 1,
+		}
+	)
+	user.insert(ignore_permissions=True)
+	return email
+
+
 class TestStartRunSecurity(IntegrationTestCase):
 	@classmethod
 	def setUpClass(cls):
@@ -601,22 +617,6 @@ class TestAttachFile(IntegrationTestCase):
 		file_doc = self._file(file_name="data.bin", content="x")
 		with self.assertRaisesRegex(frappe.ValidationError, "Unsupported file type"):
 			attach_file(file_doc.name)
-
-
-def _ensure_user(email: str) -> str:
-	if frappe.db.exists("User", email):
-		return email
-	user = frappe.get_doc(
-		{
-			"doctype": "User",
-			"email": email,
-			"first_name": email.split("@")[0],
-			"send_welcome_email": 0,
-			"enabled": 1,
-		}
-	)
-	user.insert(ignore_permissions=True)
-	return email
 
 
 class TestParseAttachments(IntegrationTestCase):

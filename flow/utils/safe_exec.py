@@ -42,27 +42,6 @@ from frappe.utils.safe_exec import (
 from RestrictedPython import safe_globals
 
 
-def safe_exec(
-	script: str,
-	_globals: dict | None = None,
-	_locals: dict | None = None,
-	*,
-	script_filename: str | None = None,
-):
-	exec_globals = get_flow_safe_globals()
-	if _globals:
-		exec_globals.update(_globals)
-
-	filename = SERVER_SCRIPT_FILE_PREFIX
-	if script_filename:
-		filename += f": {frappe.scrub(script_filename)}"
-
-	with safe_exec_flags():
-		exec(_compile_code(script, filename=filename), exec_globals, _locals)
-
-	return exec_globals, _locals
-
-
 def _gated_get_doc(*args: Any, **kwargs: Any) -> dict:
 	doc = frappe.get_doc(*args, **kwargs)
 	doc.check_permission("read")
@@ -211,3 +190,24 @@ def get_flow_safe_globals() -> NamespaceDict:
 	out.update(get_python_builtins())
 
 	return out
+
+
+def safe_exec(
+	script: str,
+	_globals: dict | None = None,
+	_locals: dict | None = None,
+	*,
+	script_filename: str | None = None,
+):
+	exec_globals = get_flow_safe_globals()
+	if _globals:
+		exec_globals.update(_globals)
+
+	filename = SERVER_SCRIPT_FILE_PREFIX
+	if script_filename:
+		filename += f": {frappe.scrub(script_filename)}"
+
+	with safe_exec_flags():
+		exec(_compile_code(script, filename=filename), exec_globals, _locals)
+
+	return exec_globals, _locals
