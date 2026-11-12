@@ -1,5 +1,22 @@
 # Changelog
 
+## [16.1.0](https://github.com/Avunu/flow/compare/v16.0.0...v16.1.0) (2026-11-12)
+
+
+### Features
+
+* add the Flow User role and private-by-owner permissions ([#8](https://github.com/Avunu/flow/issues/8)) ([e1dd23e](https://github.com/Avunu/flow/commit/e1dd23e09be3d7214b26b2b553bf238a3e4b2425))
+
+
+### Bug Fixes
+
+* check the run identity can read the agent, keep roles in the grant patch ([#11](https://github.com/Avunu/flow/issues/11)) ([b06d679](https://github.com/Avunu/flow/commit/b06d679b5f723eaaab63ef106e3fbfa88abcc126))
+* close the sandbox sendmail, print attachment and lookup gaps ([#12](https://github.com/Avunu/flow/issues/12)) ([aabf56b](https://github.com/Avunu/flow/commit/aabf56b7b093c3e63719f46b259b2531d2119a80))
+* enforce field-level read and attachment permissions in the execute sandbox ([#6](https://github.com/Avunu/flow/issues/6)) ([24e5c2c](https://github.com/Avunu/flow/commit/24e5c2c4ae10a6132978c3594aa85b56b8034369))
+* **knowledge:** harden ingest (no redirects, embed before purge, OCR once) ([#5](https://github.com/Avunu/flow/issues/5)) ([bac4391](https://github.com/Avunu/flow/commit/bac4391bba1ec7367c7276d0ee367b8ca0a7295c))
+* **knowledge:** pin URL fetches to the validated address and keep the index on failure ([#10](https://github.com/Avunu/flow/issues/10)) ([e417a1e](https://github.com/Avunu/flow/commit/e417a1eb4f8edee931f82931feb46a448feddb69))
+* trigger deletion payloads, cached trigger lookup and rename integrity ([#7](https://github.com/Avunu/flow/issues/7)) ([d1010d1](https://github.com/Avunu/flow/commit/d1010d1744722d2632b7e925a7a8b0552710993a))
+
 ## [16.0.0](https://github.com/Avunu/flow/compare/v0.0.1...v16.0.0) (2026-11-12)
 
 
