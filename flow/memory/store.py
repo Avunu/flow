@@ -97,6 +97,16 @@ def remove(name: str) -> None:
 		frappe.log_error(title="Agent memory index cleanup failed")
 
 
+def rename_agent(old: str, new: str) -> None:
+	"""Move a renamed agent's memories to its new name. Runs after the rename has committed."""
+	try:
+		db = lancedb.connect(db_path())
+		if TABLE_NAME in db.list_tables().tables:
+			db.open_table(TABLE_NAME).update(where=f"agent = {_quote(old)}", values={"agent": new})
+	except Exception:
+		frappe.log_error(title="Agent memory index rename failed")
+
+
 def search(query: str, *, agent: str, user: str, limit: int) -> list[str]:
 	"""Names of the best keyword matches among `agent`'s shared memories and `user`'s
 	personal ones, most relevant first. Empty on failure — the caller falls back to recency."""
