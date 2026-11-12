@@ -160,3 +160,5 @@ Only Cloudflare-hosted models are supported on this provider. Other vendors keep
 ## License
 
 [GNU AGPLv3](license.txt)
+
+Pieces ported from Flow in the Frappe framework are MIT-licensed by Frappe Technologies Pvt. Ltd.; see [NOTICE.md](NOTICE.md).
