@@ -44,18 +44,26 @@ from frappe.utils.safe_exec import (
 from RestrictedPython import safe_globals
 
 
+def _first_name(doctype: str, filters: Any, order_by: str | None = None) -> str:
+	"""Resolve filters to a name through get_list, so the query layer checks the filtered and ordered
+	fields against the user's permlevels (frappe.get_doc and get_last_doc would not)."""
+	rows = _permissioned_get_list(doctype, filters=filters, order_by=order_by, fields=["name"], limit=1)
+	if not rows:
+		raise frappe.DoesNotExistError(doctype=doctype)
+	return rows[0].name
+
+
 def _gated_get_doc(*args: Any, **kwargs: Any) -> dict:
+	if len(args) == 2 and isinstance(args[0], str) and isinstance(args[1], dict):
+		args = (args[0], _first_name(args[0], args[1]))
 	doc = frappe.get_doc(*args, **kwargs)
 	doc.check_permission("read")
 	doc.apply_fieldlevel_read_permissions()
 	return doc.as_dict()
 
 
-def _gated_get_last_doc(*args: Any, **kwargs: Any) -> dict:
-	doc = frappe.get_last_doc(*args, **kwargs)
-	doc.check_permission("read")
-	doc.apply_fieldlevel_read_permissions()
-	return doc.as_dict()
+def _gated_get_last_doc(doctype: str, filters: Any = None, order_by: str = "creation desc") -> dict:
+	return _gated_get_doc(doctype, _first_name(doctype, filters, order_by))
 
 
 def _gated_get_meta(doctype: str, cached: bool = True) -> dict | None:
@@ -76,29 +84,64 @@ def _gated_attach_print(doctype: str, name: str, *args: Any, **kwargs: Any):
 	return frappe.attach_print(doctype, name, *args, **kwargs)
 
 
+_PRINT_ARGS = ("doctype", "name", "file_name", "print_format", "lang", "print_letterhead")
+
+
 def _readable_attachment(attachment: dict) -> dict:
-	"""The email queue fetches file and print attachments as Administrator, so check them now."""
-	attachment = dict(attachment)
-	fid, file_url = attachment.pop("fid", None), attachment.pop("file_url", None)
+	"""The email queue fetches attachments as Administrator, so check or render them as the user now."""
+	fid, file_url = attachment.get("fid"), attachment.get("file_url")
 	if fid or file_url:
 		file = cast(File, frappe.get_doc("File", str(fid))) if fid else find_file_by_url(str(file_url))
 		if not (file and file.is_downloadable()):
 			raise frappe.PermissionError(_("No permission to read file {0}").format(fid or file_url))
-		attachment["fid"] = file.name  # the queue fetches the file checked here
+		return {"fid": file.name}  # the queue fetches the file checked here
 	if attachment.get("print_format_attachment"):
+		# Rendered here, in the user's session: the queue would render it as Administrator and show
+		# fields above the user's permlevel. The queue takes a File by id, so keep the render as one.
 		doctype, name = attachment.get("doctype"), attachment.get("name")
-		if not (
-			isinstance(doctype, str)
-			and isinstance(name, str)
-			and frappe.has_permission(doctype, "read", name)
-		):
+		if not (isinstance(doctype, str) and isinstance(name, str)):
 			raise frappe.PermissionError(_("No permission to read {0} {1}").format(doctype, name))
-		attachment.pop("doc", None)  # print the checked record itself
-	return attachment
+		printed = _gated_attach_print(**{k: v for k, v in attachment.items() if k in _PRINT_ARGS})
+		file = frappe.get_doc(
+			{
+				"doctype": "File",
+				"file_name": printed["fname"],
+				"content": printed["fcontent"],
+				"is_private": 1,
+			}
+		).insert(ignore_permissions=True)
+		return {"fid": file.name}
+	raise frappe.PermissionError(_("Unsupported attachment"))
 
 
-def _gated_sendmail(*args: Any, attachments: list | None = None, **kwargs: Any):
-	return frappe.sendmail(*args, attachments=[_readable_attachment(a) for a in attachments or []], **kwargs)
+# The arguments a script may pass. Left out on purpose: raw_html, template, args and wrapper make
+# the queue render Jinja with the full frappe namespace; communication, inline_images, header and
+# the like reach records or markup the user was not checked for.
+_SENDMAIL_ARGS = frozenset(
+	{
+		"recipients",
+		"sender",
+		"subject",
+		"message",
+		"as_markdown",
+		"reply_to",
+		"cc",
+		"bcc",
+		"reference_doctype",
+		"reference_name",
+		"delayed",
+		"now",
+		"send_after",
+	}
+)
+
+
+def _gated_sendmail(attachments: list | None = None, **kwargs: Any):
+	if unsupported := sorted(set(kwargs) - _SENDMAIL_ARGS):
+		raise frappe.PermissionError(
+			_("frappe.sendmail does not accept {0} in this sandbox").format(", ".join(unsupported))
+		)
+	return frappe.sendmail(attachments=[_readable_attachment(a) for a in attachments or []], **kwargs)
 
 
 def _permissioned_get_list(doctype, *args, **kwargs):
