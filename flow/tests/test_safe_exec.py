@@ -1,13 +1,16 @@
 # Copyright (c) 2026, Frappe Technologies and contributors
 # License: MIT. See LICENSE
 
+import email
 from typing import cast
 from unittest.mock import patch
 
 import frappe
 from frappe.custom.doctype.property_setter.property_setter import make_property_setter
 from frappe.desk.doctype.todo.todo import ToDo
+from frappe.email.doctype.email_queue.email_queue import EmailQueue, SendMailContext
 from frappe.tests import IntegrationTestCase
+from frappe.utils import cstr
 
 from flow.utils.safe_exec import get_flow_safe_globals, safe_exec
 
@@ -198,20 +201,136 @@ class TestFlowSafeExec(IntegrationTestCase):
 			}
 		).insert()
 
-	def test_sendmail_attaches_only_files_and_prints_the_user_can_read(self):
+	def _mail_account(self):
+		# the test bench has no built assets, which printing and the email styles look up
+		self.enterContext(patch("frappe.utils.get_assets_json", return_value={}))
+		frappe.db.set_single_value("Print Settings", "send_print_as_pdf", 0)
+		if not frappe.db.exists("Email Account", "Flow Test Out"):
+			frappe.get_doc(
+				{
+					"doctype": "Email Account",
+					"email_account_name": "Flow Test Out",
+					"email_id": "flow-out@example.com",
+					"enable_outgoing": 1,
+					"default_outgoing": 1,
+					"smtp_server": "localhost",
+					"smtp_port": 25,
+					"always_use_account_email_id_as_sender": 0,
+					"awaiting_password": 0,
+					"password": "x",
+				}
+			).insert(ignore_permissions=True)
+
+	def _queued(self, name):
+		"""The queued mail as the scheduler's flush sees it: as Administrator."""
+		frappe.set_user("Administrator")
+		return SendMailContext(cast(EmailQueue, frappe.get_doc("Email Queue", name)))
+
+	def _html(self, name):
+		frappe.set_user("Administrator")
+		message = email.message_from_string(
+			str(cast(EmailQueue, frappe.get_doc("Email Queue", name)).message)
+		)
+		(html,) = (
+			cast(bytes, part.get_payload(decode=True))
+			for part in message.walk()
+			if part.get_content_type() == "text/html"
+		)
+		return html.decode()
+
+	def test_sendmail_attaches_only_files_the_user_can_read(self):
 		file = self._private_file()
-		print_ = {"print_format_attachment": 1, "doctype": "ToDo", "name": file.attached_to_name}
-		attachments = [{"file_url": file.file_url}, {**print_, "doc": {"doctype": "ToDo", "name": "other"}}]
 		with patch("frappe.sendmail") as sendmail:
-			safe_exec(SENDMAIL, {"attachments": attachments})
-		self.assertEqual(sendmail.call_args.kwargs["attachments"], [{"fid": file.name}, print_])
+			safe_exec(SENDMAIL, {"attachments": [{"file_url": file.file_url}]})
+		self.assertEqual(sendmail.call_args.kwargs["attachments"], [{"fid": file.name}])
 
 		frappe.set_user("Guest")
-		for attachment in ({"fid": file.name}, {"file_url": file.file_url}, print_):
+		for attachment in ({"fid": file.name}, {"file_url": file.file_url}, {"fname": "a.txt"}):
 			with self.subTest(attachment), patch("frappe.sendmail") as sendmail:
 				with self.assertRaises(frappe.PermissionError):
 					safe_exec(SENDMAIL, {"attachments": [attachment]})
 				sendmail.assert_not_called()
+
+	def test_sendmail_print_is_rendered_as_the_user_not_as_the_queue(self):
+		# desk users cannot see the permlevel-2 seen_by table; the queue runs as Administrator
+		self._mail_account()
+		seen_by = self._desk_user("System Manager")
+		note = frappe.get_doc(
+			{"doctype": "Note", "title": "flow printed", "public": 1, "seen_by": [{"user": seen_by}]}
+		).insert()
+		print_ = {"print_format_attachment": 1, "doctype": "Note", "name": note.name}
+		frappe.set_user(self._desk_user())
+		queued = self._run(
+			f'result = frappe.sendmail(recipients=["x@example.com"], attachments=[{print_}]).name'
+		)
+		context = self._queued(queued)
+		(attachment,) = context.attachments
+		printed = cstr(attachment["fcontent"])
+		self.assertIn("flow printed", printed)
+		self.assertNotIn(seen_by, printed)
+
+		frappe.set_user("Guest")
+		with self.assertRaises(frappe.PermissionError):
+			safe_exec(SENDMAIL, {"attachments": [print_]})
+
+	def test_sendmail_accepts_only_the_listed_arguments(self):
+		for argument in (
+			"raw_html=True",
+			'template="x"',
+			'wrapper="x"',
+			"args={}",
+			'header="x"',
+			'communication="x"',
+		):
+			with self.subTest(argument), patch("frappe.sendmail") as sendmail:
+				with self.assertRaises(frappe.PermissionError):
+					safe_exec(f'frappe.sendmail(recipients=["someone@example.com"], {argument})')
+				sendmail.assert_not_called()
+
+	def test_sendmail_does_not_evaluate_templates_in_the_message(self):
+		# raw_html would render the message as Jinja with the unchecked frappe.db / frappe.get_doc
+		self._mail_account()
+		note = frappe.get_doc({"doctype": "Note", "title": "flow hidden", "content": "LEAKME"}).insert()
+		frappe.set_user(self._desk_user())
+		with self.assertRaises(frappe.PermissionError):
+			self._run(
+				'result = frappe.sendmail(recipients=["x@example.com"], raw_html=True, '
+				f"message=\"{{{{ frappe.get_doc('Note', '{note.name}').content }}}}\")"
+			)
+		queued = self._run(
+			'result = frappe.sendmail(recipients=["x@example.com"], message="{{ 7*7 }}", subject="s").name'
+		)
+		body = self._html(queued)
+		self.assertIn("{{ 7*7 }}", body)
+		self.assertNotIn("49", body)
+
+	def test_get_doc_and_get_last_doc_do_not_filter_or_order_by_hidden_fields(self):
+		make_property_setter("Note", "content", "permlevel", 2, "Int")
+		frappe.get_doc(
+			{"doctype": "Note", "title": "flow oracle", "public": 1, "content": "TOPSECRET"}
+		).insert()
+		frappe.set_user(self._desk_user())
+		visible = {"title": "flow oracle"}
+		self.assertTrue(self._run(f"result = frappe.get_doc('Note', {visible})"))
+		self.assertTrue(self._run(f"result = frappe.get_last_doc('Note', filters={visible})"))
+		for filters in (
+			{**visible, "content": ["like", "TOPSECRET%"]},
+			{**visible, "content": ["like", "NOPE%"]},
+		):
+			for code in (
+				f"result = frappe.get_doc('Note', {filters})",
+				f"result = frappe.get_last_doc('Note', filters={filters})",
+			):
+				with self.subTest(code), self.assertRaises(frappe.PermissionError):
+					self._run(code)
+		with self.assertRaises(frappe.PermissionError):
+			self._run(f"result = frappe.get_last_doc('Note', filters={visible}, order_by='content desc')")
+
+	def test_get_doc_and_get_last_doc_report_a_miss(self):
+		with self.assertRaises(frappe.DoesNotExistError):
+			self._run("result = frappe.get_doc('Note', {'title': 'flow no such note'})")
+		with self.assertRaises(frappe.DoesNotExistError):
+			self._run("result = frappe.get_last_doc('Note', filters={'title': 'flow no such note'})")
 
 	def test_sendmail_without_attachments_is_unchanged(self):
 		with patch("frappe.sendmail") as sendmail:
