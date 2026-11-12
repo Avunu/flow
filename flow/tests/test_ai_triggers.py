@@ -18,6 +18,7 @@ from flow.flow.doctype.flow_run.flow_run import FlowRun
 from flow.flow.doctype.flow_session.flow_session import FlowSession
 from flow.flow.doctype.flow_trigger.flow_trigger import FlowTrigger
 from flow.lib.model import ChatResponse, Model
+from flow.permissions import FLOW_USER_ROLE
 from flow.tools.builtins import sync_builtin_tools
 from flow.triggers import dispatch, dispatch_scheduled, fire
 
@@ -176,7 +177,7 @@ class TestDispatch(IntegrationTestCase):
 					"doctype": "User",
 					"email": "dispatch-service@example.com",
 					"first_name": "Svc",
-					"roles": [{"role": "System Manager"}],
+					"roles": [{"role": "System Manager"}, {"role": FLOW_USER_ROLE}],
 				}
 			),
 		).insert(ignore_permissions=True)
@@ -324,7 +325,7 @@ class TestFire(IntegrationTestCase):
 					"doctype": "User",
 					"email": "trigger-owner@example.com",
 					"first_name": "Owner",
-					"roles": [{"role": "System Manager"}],
+					"roles": [{"role": "System Manager"}, {"role": FLOW_USER_ROLE}],
 				}
 			),
 		).insert(ignore_permissions=True)
@@ -359,7 +360,7 @@ class TestFire(IntegrationTestCase):
 					"doctype": "User",
 					"email": "trigger-service@example.com",
 					"first_name": "Service",
-					"roles": [{"role": "System Manager"}],
+					"roles": [{"role": "System Manager"}, {"role": FLOW_USER_ROLE}],
 				}
 			),
 		).insert(ignore_permissions=True)

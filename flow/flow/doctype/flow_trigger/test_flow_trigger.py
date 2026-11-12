@@ -15,6 +15,7 @@ from flow.flow.doctype.flow_model.flow_model import FlowModel
 from flow.flow.doctype.flow_run.flow_run import FlowRun
 from flow.flow.doctype.flow_trigger.flow_trigger import FlowTrigger
 from flow.lib.model import ChatResponse, Model
+from flow.permissions import FLOW_USER_ROLE
 from flow.tools.builtins import sync_builtin_tools
 from flow.triggers import triggers as triggers_module
 
@@ -331,7 +332,7 @@ class TestFlowTriggerIdentity(IntegrationTestCase):
 						"doctype": "User",
 						"email": "trigger-run-as@example.com",
 						"first_name": "Run As",
-						"roles": [{"role": "Report Manager"}],
+						"roles": [{"role": "Report Manager"}, {"role": FLOW_USER_ROLE}],
 						"send_welcome_email": 0,
 					}
 				),
@@ -356,23 +357,25 @@ class TestFlowTriggerIdentity(IntegrationTestCase):
 			triggers.fire(trig.name, target_doctype="ToDo", target_name=self.todo.name)
 		return seen[0]
 
-	def test_run_as_must_be_a_desk_user(self):
-		website_user = (
+	def test_run_as_must_hold_the_flow_user_role(self):
+		desk_user = (
 			frappe.get_doc(
 				{
 					"doctype": "User",
-					"email": "trigger-website@example.com",
-					"first_name": "Website",
+					"email": "trigger-desk@example.com",
+					"first_name": "Desk",
+					"roles": [{"role": "Report Manager"}],
 					"send_welcome_email": 0,
 				}
 			)
 			.insert(ignore_permissions=True)
 			.name
 		)
-		self.assertNotIn("Desk User", frappe.get_roles(website_user))
+		self.assertIn("Desk User", frappe.get_roles(desk_user))
+		self.assertNotIn(FLOW_USER_ROLE, frappe.get_roles(desk_user))
 
-		with self.assertRaisesRegex(frappe.ValidationError, "desk user"):
-			frappe.get_doc(_trigger(str(self.agent.name), run_as=website_user)).insert()
+		with self.assertRaisesRegex(frappe.ValidationError, "Flow User"):
+			frappe.get_doc(_trigger(str(self.agent.name), run_as=desk_user)).insert()
 
 	def test_fire_runs_as_run_as_user(self):
 		trig = cast(FlowTrigger, frappe.get_doc(_trigger(str(self.agent.name), run_as=self.user))).insert()

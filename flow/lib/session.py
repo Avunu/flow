@@ -38,13 +38,12 @@ def _resolve_new_agent(agent: Any, model: str | None) -> tuple[Agent, str | None
 		return agent, None, None, agent.snapshot()
 
 	if agent is None:
-		# The default Assistant is shared; no per-user read check (matches the desk default).
 		agent_doc = cast("FlowAgent", frappe.get_doc("Flow Agent", _default_agent_name()))
 	else:
 		agent_doc = cast(
 			"FlowAgent", frappe.get_doc("Flow Agent", agent) if isinstance(agent, str) else agent
 		)
-		frappe.has_permission("Flow Agent", "read", agent_doc.name, throw=True)
+	frappe.has_permission("Flow Agent", "read", agent_doc.name, throw=True)
 	return (
 		agent_doc.assemble(model=model),
 		str(agent_doc.name),
@@ -85,6 +84,7 @@ def _resolve_existing_agent(doc: FlowSession, agent: Any) -> tuple[Agent, dict[s
 	if isinstance(agent, Agent):
 		return agent, agent.snapshot()
 	if doc.agent:
+		frappe.has_permission("Flow Agent", "read", doc.agent, throw=True)
 		agent_doc = cast("FlowAgent", frappe.get_doc("Flow Agent", doc.agent))
 		return agent_doc.assemble(model=doc.model), agent_doc._snapshot(model=doc.model)
 	throw(
@@ -93,19 +93,16 @@ def _resolve_existing_agent(doc: FlowSession, agent: Any) -> tuple[Agent, dict[s
 	)
 
 
-def _assert_session_owner(doc: FlowSession) -> None:
-	if doc.owner == frappe.session.user:
-		return
-	if frappe.has_permission("Flow Session", "write", doc):
-		return
-	frappe.throw(_("Not permitted to use this session."), frappe.PermissionError)
+def assert_session_access(doc: FlowSession) -> None:
+	"""The user may continue this session: the Flow User role on their own, or a System Manager on a Trigger one."""
+	frappe.has_permission("Flow Session", "write", doc, throw=True)
 
 
 def load_session(name: str, *, agent: Any = None, model: str | None = None) -> FlowSession:
 	"""Resume an existing conversation by id. Doctype-backed sessions rebuild their runtime
 	automatically; code-agent sessions require the same `Agent` to be passed again."""
 	doc = cast("FlowSession", frappe.get_doc("Flow Session", name))
-	_assert_session_owner(doc)
+	assert_session_access(doc)
 
 	if isinstance(agent, str) and agent and doc.agent and agent != doc.agent:
 		frappe.throw(
@@ -121,9 +118,8 @@ def load_session(name: str, *, agent: Any = None, model: str | None = None) -> F
 	return doc
 
 
-def assert_run_owner(run: FlowRun) -> None:
-	if run.owner == frappe.session.user:
-		return
-	if frappe.has_permission("Flow Run", "write", run):
-		return
-	frappe.throw(_("Not permitted to resume this run."), frappe.PermissionError)
+def assert_run_access(run: FlowRun) -> None:
+	"""The user may act on this run: they can read it, and write it unless it is their own."""
+	frappe.has_permission("Flow Run", "read", run, throw=True)
+	if run.owner != frappe.session.user:
+		frappe.has_permission("Flow Run", "write", run, throw=True)
