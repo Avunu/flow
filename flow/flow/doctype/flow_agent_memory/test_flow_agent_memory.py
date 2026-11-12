@@ -63,6 +63,15 @@ class IntegrationTestFlowAgentMemory(IntegrationTestCase):
 		frappe.db.rollback()
 		store.drop_table()
 
+	def test_a_renamed_agent_still_finds_its_memories(self):
+		doc = cast(FlowAgentMemory, frappe.get_doc(_memory(str(self.agent.name)))).insert()
+		frappe.rename_doc("Flow Agent", self.agent.name, "Memory Test Agent Renamed")
+		found = store.search("Widget", agent="Memory Test Agent Renamed", user="Administrator", limit=5)
+		self.assertEqual(found, [doc.name])
+		self.assertEqual(
+			store.search("Widget", agent=str(self.agent.name), user="Administrator", limit=5), []
+		)
+
 	def test_agent_scope_clears_user(self):
 		doc = cast(
 			FlowAgentMemory, frappe.get_doc(_memory(str(self.agent.name), user="Administrator"))

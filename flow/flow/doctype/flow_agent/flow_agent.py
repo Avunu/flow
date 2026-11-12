@@ -53,6 +53,11 @@ class FlowAgent(Document):
 	def before_rename(self, old: str, _new: str, _merge: bool = False) -> None:
 		block_rename(self, old)
 
+	def after_rename(self, old: str, new: str, _merge: bool = False) -> None:  # frappe-vulture:ignore
+		from flow.memory import store
+
+		store.rename_agent(old, new)
+
 	def before_insert(self):
 		if not self.tools:
 			for slug in DEFAULT_TOOL_SLUGS:

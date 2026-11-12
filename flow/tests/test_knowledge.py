@@ -362,6 +362,22 @@ class TestKnowledgeSettings(IntegrationTestCase):
 			self._save_settings(chunk_size=0)
 
 
+class TestEmbeddingModelRename(IntegrationTestCase):
+	def setUp(self):
+		self.model = _make_model()
+		_set_settings(embedding_model=self.model.name, embedding_dimension=DIM)
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def test_renaming_the_embedding_model_keeps_it_selected(self):
+		frappe.rename_doc("Flow Model", self.model.name, "Embed Model Renamed")
+		frappe.clear_document_cache("Flow Knowledge Settings", "Flow Knowledge Settings")
+		settings = cast(FlowKnowledgeSettings, frappe.get_doc("Flow Knowledge Settings"))
+		self.assertEqual(settings.embedding_model, "Embed Model Renamed")
+		self.assertEqual(settings.embedding_dimension, DIM)
+
+
 class TestChunker(IntegrationTestCase):
 	def test_empty_text_returns_no_chunks(self):
 		self.assertEqual(chunk_text("   \n  ", chunk_size=100, overlap=10), [])
@@ -649,6 +665,19 @@ class TestIngest(IntegrationTestCase):
 
 	def _lance_count(self):
 		return store._open_table().count_rows() if store.table_exists() else 0
+
+	def test_a_renamed_knowledge_base_keeps_its_chunks(self):
+		store.ensure_table_for_dimension(DIM)
+		store.add([{**row, "kb": self.kb.name} for row in _rows()])
+		frappe.rename_doc("Flow Knowledge Base", self.kb.name, "Ingest KB Renamed")
+		hits = store.search([1.0, 0.0, 0.0, 0.0], kbs=["Ingest KB Renamed"], limit=5)
+		self.assertEqual(sorted(hit["id"] for hit in hits), [1, 2, 3])
+		self.assertEqual(store.search([1.0, 0.0, 0.0, 0.0], kbs=["Ingest KB"], limit=5), [])
+
+	def test_renaming_a_knowledge_base_before_any_ingestion_is_fine(self):
+		self.assertFalse(store.table_exists())
+		frappe.rename_doc("Flow Knowledge Base", self.kb.name, "Ingest KB Renamed")
+		self.assertTrue(frappe.db.exists("Flow Knowledge Base", "Ingest KB Renamed"))
 
 	def test_text_source_ingests_to_both_stores(self):
 		source = self._make_source(content="Wifi keeps dropping on the office network every afternoon. " * 4)

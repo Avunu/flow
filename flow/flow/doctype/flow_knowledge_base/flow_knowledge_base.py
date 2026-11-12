@@ -35,3 +35,8 @@ class FlowKnowledgeBase(Document):
 
 	def before_rename(self, old: str, new: str, merge: bool = False) -> None:  # frappe-vulture:ignore
 		block_rename(self, old)
+
+	def after_rename(self, old: str, new: str, merge: bool = False) -> None:  # frappe-vulture:ignore
+		from flow.knowledge import store
+
+		store.rename_kb(old, new)

@@ -12,11 +12,13 @@ import frappe
 
 if TYPE_CHECKING:
 	from frappe.model.document import Document
+	from frappe.utils.redis_wrapper import ClientCache
 
 	from flow.flow.doctype.flow_agent.flow_agent import FlowAgent
 	from flow.flow.doctype.flow_trigger.flow_trigger import FlowTrigger
 
 DOC_EVENTS = frozenset({"after_insert", "on_update", "on_submit", "on_cancel", "on_trash"})
+CACHE_PREFIX = "flow_doctype_triggers::"
 
 
 @contextmanager
@@ -38,17 +40,35 @@ def _acting_as(user: str) -> Generator[None]:
 		frappe.set_user(original_user)
 
 
+def _client_cache() -> ClientCache:
+	# frappe.init() always sets it up; the module attribute is only typed as optional
+	return cast("ClientCache", frappe.client_cache)
+
+
 def _doctype_triggers(target_doctype: str, doc_event: str) -> list:
+	triggers = _client_cache().get_value(
+		f"{CACHE_PREFIX}{target_doctype}", generator=lambda: _enabled_doctype_triggers(target_doctype)
+	)
+	return [t for t in triggers if t.doc_event == doc_event]
+
+
+def _enabled_doctype_triggers(target_doctype: str) -> list:
 	return frappe.get_all(
 		"Flow Trigger",
-		filters={
-			"event": "DocType Event",
-			"target_doctype": target_doctype,
-			"doc_event": doc_event,
-			"enabled": 1,
-		},
-		fields=["name", "condition", "run_as", "owner"],
+		filters={"event": "DocType Event", "target_doctype": target_doctype, "enabled": 1},
+		fields=["name", "doc_event", "condition", "run_as", "owner"],
 	)
+
+
+def clear_trigger_cache() -> None:
+	"""Drop the cached triggers now and again when the transaction ends."""
+
+	def forget():
+		_client_cache().delete_keys(CACHE_PREFIX)
+
+	forget()
+	frappe.db.after_commit.add(forget)
+	frappe.db.after_rollback.add(forget)
 
 
 def _eval_condition(condition: str, doc: Document) -> bool:
@@ -82,6 +102,8 @@ def dispatch(doc: Document, method: str | None = None) -> None:
 		return
 
 	triggers = _doctype_triggers(doc.doctype, method)
+	# a deleted document can't be loaded once the job runs, so it travels with the job
+	deleted_doc = doc.as_dict() if triggers and method == "on_trash" else None
 
 	for trigger in triggers:
 		if trigger.condition and not _passes_condition(trigger, doc):
@@ -92,6 +114,7 @@ def dispatch(doc: Document, method: str | None = None) -> None:
 			trigger=trigger.name,
 			target_doctype=doc.doctype,
 			target_name=doc.name,
+			deleted_doc=deleted_doc,
 		)
 
 
@@ -122,8 +145,10 @@ def fire(
 	trigger: str,
 	target_doctype: str | None = None,
 	target_name: str | None = None,
+	deleted_doc: dict | None = None,
 ) -> str | None:
-	"""Worker: render the prompt and run the agent. Returns the Flow Run name, or None if skipped."""
+	"""Worker: render the prompt and run the agent. Returns the Flow Run name, or None if skipped.
+	`deleted_doc` is the target's last state when its deletion fired the trigger."""
 	t = cast("FlowTrigger", frappe.get_doc("Flow Trigger", trigger))
 	if not t.enabled:
 		return None
@@ -131,13 +156,16 @@ def fire(
 	# A trigger runs as its configured `run_as` user (falling back to the owner)
 	with _acting_as(t.run_as or t.owner):
 		doc = None
-		if target_doctype and target_name:
+		if deleted_doc:
+			doc = frappe.get_doc(deleted_doc)
+			target_doctype = target_name = None  # the run has nothing left to link to
+		elif target_doctype and target_name:
 			try:
 				doc = frappe.get_doc(target_doctype, target_name)
 			except frappe.DoesNotExistError:
 				return None
-			if t.condition and not _eval_condition(t.condition, doc):
-				return None
+		if doc and t.condition and not _eval_condition(t.condition, doc):
+			return None
 
 		# t.prompt_template is authored by a System Manager (the only role that can write a Flow
 		# Trigger) and validated against Jinja's SandboxedEnvironment on save; frappe.render_template
