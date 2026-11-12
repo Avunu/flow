@@ -16,6 +16,7 @@ from flow.flow.doctype.flow_run.flow_run import FlowRun
 from flow.flow.doctype.flow_session.flow_session import FlowSession
 from flow.lib.agent import Agent
 from flow.lib.model import ChatResponse, Model
+from flow.permissions import FLOW_USER_ROLE
 from flow.tools.builtins import sync_builtin_tools
 
 
@@ -268,7 +269,7 @@ class TestFlowAgentModelPermission(IntegrationTestCase):
 					"doctype": "User",
 					"email": "model-perm@example.com",
 					"first_name": "Model Perm",
-					"roles": [{"role": "Report Manager"}],
+					"roles": [{"role": "Report Manager"}, {"role": FLOW_USER_ROLE}],
 					"send_welcome_email": 0,
 				}
 			),

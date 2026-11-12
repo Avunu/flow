@@ -2,6 +2,7 @@
 # License: MIT. See LICENSE
 
 import json
+import os
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import patch
@@ -24,6 +25,8 @@ from flow.knowledge.extract import (
 	_extract_docx,
 	_extract_html,
 	_extract_pdf,
+	_extract_pdf_page,
+	_extract_url_source,
 	_extract_xlsx,
 	_render_rich_text,
 	_validate_public_url,
@@ -162,6 +165,19 @@ class TestKnowledgeStore(IntegrationTestCase):
 	def test_add_requires_table(self):
 		with self.assertRaisesRegex(frappe.ValidationError, "not initialized"):
 			store.add(_rows())
+
+	def test_test_store_is_a_throwaway_outside_the_site(self):
+		path = store.db_path()
+		self.assertEqual(path, store.db_path())
+		self.assertFalse(path.startswith(frappe.get_site_path()))
+		self.assertTrue(os.path.basename(path).startswith("flow-lancedb-"))
+
+	def test_live_store_is_under_the_site(self):
+		frappe.flags.in_test = False
+		try:
+			self.assertEqual(store.db_path(), frappe.get_site_path("private", "files", "lancedb"))
+		finally:
+			frappe.flags.in_test = True
 
 
 def _embedding_response(vectors, shuffle=False):
@@ -594,6 +610,56 @@ class TestExtract(IntegrationTestCase):
 		image.save(buffer, format="PDF", resolution=100)
 		self.assertIn("Scanned", _extract_pdf(buffer.getvalue()))
 
+	def test_pdf_page_with_images_is_ocrd_once(self):
+		page = SimpleNamespace(
+			images=[{"x0": 0, "top": 0, "x1": 10, "bottom": 10}] * 3,
+			find_tables=list,
+			extract_text=lambda: "Searchable text",
+		)
+		page.outside_bbox = lambda bbox: page
+		with (
+			patch("flow.knowledge.extract._render_page_png", return_value=b"png") as render,
+			patch("flow.knowledge.extract._ocr_image", return_value="Scanned text") as ocr,
+		):
+			text = _extract_pdf_page(page)
+		render.assert_called_once()
+		ocr.assert_called_once_with(b"png")
+		self.assertEqual(text, "Searchable text\n\nScanned text")
+
+	def test_pdf_page_without_images_is_not_ocrd(self):
+		page = SimpleNamespace(images=[], find_tables=list, extract_text=lambda: "Plain text")
+		with patch("flow.knowledge.extract._ocr_image") as ocr:
+			self.assertEqual(_extract_pdf_page(page), "Plain text")
+		ocr.assert_not_called()
+
+	def _fetch_url(self, response):
+		source = SimpleNamespace(url="https://example.com/page")
+		with (
+			patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("93.184.216.34", 0))]),
+			patch("requests.get", return_value=response) as get,
+		):
+			try:
+				return _extract_url_source(source), get
+			finally:
+				self.get = get
+
+	def test_url_source_does_not_follow_redirects(self):
+		response = SimpleNamespace(is_redirect=True, headers={"Location": "http://169.254.169.254/"})
+		with self.assertRaisesRegex(frappe.ValidationError, "redirects"):
+			self._fetch_url(response)
+		self.assertIs(self.get.call_args.kwargs["allow_redirects"], False)
+
+	def test_url_source_reads_a_plain_response(self):
+		response = SimpleNamespace(
+			is_redirect=False,
+			headers={"Content-Type": "text/html"},
+			raise_for_status=lambda: None,
+			iter_content=lambda size: iter([b"<p>Hello page</p>"]),
+		)
+		docs, get = self._fetch_url(response)
+		self.assertEqual([d.text for d in docs], ["Hello page"])
+		self.assertIs(get.call_args.kwargs["allow_redirects"], False)
+
 	def test_validate_public_url_rejects_non_http_scheme(self):
 		with self.assertRaisesRegex(frappe.ValidationError, "http"):
 			_validate_public_url("ftp://example.com/x")
@@ -780,6 +846,24 @@ class TestIngest(IntegrationTestCase):
 		self.assertEqual(
 			self.events, [("commit", "Processing"), ("rollback", "Processing"), ("commit", "Failed")]
 		)
+
+	def test_failed_embedding_keeps_the_old_chunks(self):
+		source = self._make_source(content="Reset your password from the account settings page. " * 4)
+		self._ingest(source.name)
+		before = self._chunks(source.name)
+		self.assertTrue(before)
+		lance_before = self._lance_count()
+
+		with (
+			patch("litellm.embedding", side_effect=RuntimeError("provider down")),
+			patch.object(frappe.db, "commit"),
+			patch.object(frappe.db, "rollback"),
+			self.assertRaises(frappe.ValidationError),
+		):
+			ingest_source(source.name)
+
+		self.assertEqual(self._chunks(source.name), before)
+		self.assertEqual(self._lance_count(), lance_before)
 
 	def test_purge_source_is_safe_when_empty(self):
 		source = self._make_source(content="never ingested")
@@ -1101,7 +1185,14 @@ class TestRetriever(IntegrationTestCase):
 		results = self._retrieve("laptop", kbs=[self.kb.name])
 		self.assertTrue(results)
 		self.assertTrue(all("laptop" in r["content"] for r in results))
-		self.assertTrue(all(r["source"] == source.name for r in results))
+		self.assertTrue(all(r["source"] == source.title for r in results))
+
+	def test_retrieve_cites_the_source_title_not_its_hash_name(self):
+		source = self._text_source(self.kb.name, "laptop setup guide. " * 4, title="Laptop Guide")
+		results = self._retrieve("laptop", kbs=[self.kb.name])
+		self.assertTrue(results)
+		self.assertNotEqual(source.name, "Laptop Guide")
+		self.assertEqual({r["source"] for r in results}, {"Laptop Guide"})
 
 	def test_retrieve_requires_a_knowledge_base(self):
 		with self.assertRaises(frappe.ValidationError):
@@ -1119,7 +1210,7 @@ class TestRetriever(IntegrationTestCase):
 		self._text_source(other.name, "laptop onboarding steps. " * 4, title="Other Doc")
 		results = self._retrieve("laptop", kbs=[self.kb.name])
 		self.assertTrue(results)
-		self.assertTrue(all(r["source"] == mine.name for r in results))
+		self.assertTrue(all(r["source"] == mine.title for r in results))
 
 	def test_retrieve_skips_disabled_knowledge_base(self):
 		self._text_source(self.kb.name, "laptop setup guide. " * 4)
@@ -1132,7 +1223,7 @@ class TestRetriever(IntegrationTestCase):
 		mine = self._text_source(self.kb.name, "laptop setup guide. " * 4)
 		results = self._retrieve("laptop", kbs=[self.kb.name, "No Such KB"])
 		self.assertTrue(results)
-		self.assertTrue(all(r["source"] == mine.name for r in results))
+		self.assertTrue(all(r["source"] == mine.title for r in results))
 
 	def test_retrieve_vector_mode_omits_text(self):
 		self._text_source(self.kb.name, "laptop setup guide. " * 4)
@@ -1192,7 +1283,7 @@ class TestKnowledgeBuilder(IntegrationTestCase):
 		with patch("litellm.embedding", side_effect=self._fake_embed):
 			results = retrieve("laptop", kbs=[kb.name])
 		self.assertTrue(results)
-		self.assertTrue(all(r["source"] == source_name for r in results))
+		self.assertTrue(all(r["source"] == source.title for r in results))
 
 	def test_add_local_file_reads_and_indexes_disk_file(self):
 		import os
@@ -1219,7 +1310,7 @@ class TestKnowledgeBuilder(IntegrationTestCase):
 		with patch("litellm.embedding", side_effect=self._fake_embed):
 			results = retrieve("laptop", kbs=[kb.name])
 		self.assertTrue(results)
-		self.assertTrue(all(r["source"] == source_name for r in results))
+		self.assertTrue(all(r["source"] == source.title for r in results))
 
 	def test_add_text_does_not_enqueue_async_ingestion(self):
 		kb = Knowledge("Sync KB")

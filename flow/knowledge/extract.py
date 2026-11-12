@@ -90,18 +90,6 @@ def _ocr_image(data: bytes) -> str:
 	return "\n".join(result.txts)
 
 
-def _ocr_region(page, image) -> str:
-	bbox = (
-		max(image["x0"], page.bbox[0]),
-		max(image["top"], page.bbox[1]),
-		min(image["x1"], page.bbox[2]),
-		min(image["bottom"], page.bbox[3]),
-	)
-	if bbox[2] <= bbox[0] or bbox[3] <= bbox[1]:
-		return ""
-	return _ocr_image(_render_page_png(page.crop(bbox)))
-
-
 def _clean_pdf_text(text: str) -> str:
 	"""Join single newlines (line-break artifacts) while keeping paragraph breaks."""
 	text = re.sub(r"(?<!\n)[ \t]*\n[ \t]*(?!\n)", " ", text)
@@ -125,16 +113,12 @@ def _extract_pdf_page(page) -> str:
 	if prose:
 		parts.append(prose)
 
-	# No text layer → raw scan; OCR the full page. Otherwise OCR every image region
-	# individually (logos, stamps, embedded scans). Duplicated text on searchable PDFs
-	# is acceptable; missing text is not.
-	if page.images and not parts:
+	# OCR once per page, including embedded scans in otherwise searchable PDFs.
+	# A page can hold many small image objects; OCRing each separately repeats the
+	# expensive inference and can turn a one-page attachment into a minute-long wait.
+	# Duplicated text on searchable PDFs is acceptable; missing text is not.
+	if page.images:
 		parts.append(_ocr_image(_render_page_png(page)))
-	elif page.images:
-		for image in page.images:
-			text = _ocr_region(page, image)
-			if text:
-				parts.append(text)
 
 	return "\n\n".join(part for part in parts if part)
 
@@ -278,9 +262,16 @@ def _extract_url_source(source) -> list[ExtractedDoc]:
 
 	url = (source.url or "").strip()
 	_validate_public_url(url)
+	# a redirect could point a validated public URL at an internal service
 	response = requests.get(
-		url, timeout=URL_TIMEOUT, stream=True, headers={"User-Agent": "Flow-Knowledge/1.0"}
+		url,
+		timeout=URL_TIMEOUT,
+		stream=True,
+		allow_redirects=False,
+		headers={"User-Agent": "Flow-Knowledge/1.0"},
 	)
+	if response.is_redirect:
+		frappe.throw(_("The URL redirects; enter the address it leads to."), title=_("Invalid URL"))
 	response.raise_for_status()
 
 	raw = _read_capped(response)
