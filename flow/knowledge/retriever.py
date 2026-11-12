@@ -25,6 +25,7 @@ from frappe import _
 
 KB_DOCTYPE = "Flow Knowledge Base"
 CHUNK_DOCTYPE = "Flow Knowledge Chunk"
+SOURCE_DOCTYPE = "Flow Knowledge Source"
 DEFAULT_LIMIT = 5
 
 
@@ -63,6 +64,12 @@ def _hydrate(ids: set[int]) -> dict[int, dict[str, Any]]:
 	return {int(row["name"]): row for row in rows}
 
 
+def _source_titles(names: set[str]) -> dict[str, str]:
+	"""Sources are named by hash; a hit cites the title an admin gave it."""
+	rows = frappe.get_all(SOURCE_DOCTYPE, filters={"name": ["in", list(names)]}, fields=["name", "title"])
+	return {row["name"]: row["title"] for row in rows}
+
+
 def retrieve(query: str, *, kbs: list[str], limit: int = DEFAULT_LIMIT) -> list[dict[str, Any]]:
 	"""Return the best-matching chunks within `kbs`, most relevant first.
 
@@ -93,6 +100,7 @@ def retrieve(query: str, *, kbs: list[str], limit: int = DEFAULT_LIMIT) -> list[
 		return []
 
 	chunks = _hydrate({int(hit["id"]) for hit in hits})
+	titles = _source_titles({chunk["source"] for chunk in chunks.values()})
 	results: list[dict[str, Any]] = []
 	for hit in hits:
 		chunk = chunks.get(int(hit["id"]))
@@ -102,7 +110,7 @@ def retrieve(query: str, *, kbs: list[str], limit: int = DEFAULT_LIMIT) -> list[
 			{
 				"content": chunk["content"],
 				"score": hit["score"],
-				"source": chunk["source"],
+				"source": titles.get(chunk["source"], chunk["source"]),
 				"reference_doctype": chunk.get("reference_doctype"),
 				"reference_name": chunk.get("reference_name"),
 			}

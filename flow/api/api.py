@@ -153,13 +153,13 @@ def resume_run(
 	run_name: str, answers: dict[str, Any] | str, stream: bool | str = False
 ) -> dict[str, Any] | Response:
 	"""Resume a Paused run. `answers` maps each question.key to the user's answer. With `stream=True`, returns SSE."""
-	from flow.lib.session import assert_run_owner, load_session
+	from flow.lib.session import assert_run_access, load_session
 
 	parsed_answers = _parse_answers(answers)
 	stream = _is_truthy(stream)
 
 	run = cast("FlowRun", frappe.get_doc("Flow Run", run_name))
-	assert_run_owner(run)
+	assert_run_access(run)
 	if run.status != "Paused":
 		frappe.throw(
 			_("Only Paused runs can be resumed (this run is {0}).").format(run.status),
@@ -176,13 +176,13 @@ def resume_run(
 def stop_run(run_name: str) -> dict[str, str]:
 	"""Stop a run at the user's request: terminate a Paused run so the agent won't continue,
 	or finalize a Running one whose SSE stream the client has aborted."""
-	from flow.lib.session import assert_run_owner
+	from flow.lib.session import assert_run_access
 
 	if not isinstance(run_name, str) or not run_name.strip():
 		frappe.throw(_("Run is required."), title=_("Invalid Run"))
 
 	run = cast("FlowRun", frappe.get_doc("Flow Run", run_name.strip()))
-	assert_run_owner(run)
+	assert_run_access(run)
 	if run.status not in ("Completed", "Failed"):
 		run.mark_failed("Stopped by user.")
 	return {"status": run.status}
@@ -196,10 +196,10 @@ def recover_session(session: str) -> dict[str, int]:
 	if not isinstance(session, str) or not session.strip():
 		frappe.throw(_("Session is required."), title=_("Invalid Session"))
 
-	from flow.lib.session import _assert_session_owner
+	from flow.lib.session import assert_session_access
 
 	doc = cast("FlowSession", frappe.get_doc("Flow Session", session.strip()))
-	_assert_session_owner(doc)
+	assert_session_access(doc)
 
 	abandoned = frappe.get_all("Flow Run", filters={"session": doc.name, "status": "Running"}, pluck="name")
 	for name in abandoned:
@@ -219,7 +219,7 @@ def submit_feedback(run_name: str, rating: str, comment: str | None = None) -> d
 	"""Record thumbs feedback on a finished run, or clear it with rating "None". A
 	thumbs-down comment is stored as shared agent memory when the agent has memory
 	enabled (a no-op otherwise). Clearing the rating leaves any saved memory intact."""
-	from flow.lib.session import assert_run_owner
+	from flow.lib.session import assert_run_access
 	from flow.memory.memory import save_feedback_memory
 
 	if not isinstance(run_name, str) or not run_name.strip():
@@ -234,7 +234,7 @@ def submit_feedback(run_name: str, rating: str, comment: str | None = None) -> d
 		)
 
 	run = cast("FlowRun", frappe.get_doc("Flow Run", run_name.strip()))
-	assert_run_owner(run)
+	assert_run_access(run)
 	if run.status not in ("Completed", "Failed"):
 		frappe.throw(
 			_("Feedback applies to finished runs only (this run is {0}).").format(run.status),
@@ -281,6 +281,7 @@ def attach_file(file: str) -> dict[str, Any]:
 	if not isinstance(file, str) or not file.strip():
 		frappe.throw(_("File is required."), title=_("Invalid Attachment"))
 
+	frappe.has_permission("Flow Session", "create", throw=True)
 	from flow.flow.doctype.flow_session_attachment.flow_session_attachment import stage_attachment
 
 	return stage_attachment(file.strip())

@@ -15,7 +15,9 @@
   "api_key",
   "base_url",
   "section_break_params",
-  "params"
+  "params",
+  "section_break_access",
+  "roles"
  ],
  "fields": [
   {
@@ -82,10 +84,22 @@
    "fieldname": "params",
    "fieldtype": "JSON",
    "label": "Params"
+  },
+  {
+   "fieldname": "section_break_access",
+   "fieldtype": "Section Break",
+   "label": "Access"
+  },
+  {
+   "description": "Who can use this model; empty means every Flow User. Others pick another model for agents that run on it.",
+   "fieldname": "roles",
+   "fieldtype": "Table MultiSelect",
+   "label": "Roles",
+   "options": "Has Role"
   }
  ],
  "links": [],
- "modified": "2026-11-11 18:00:00.000000",
+ "modified": "2026-11-11 20:00:00.000000",
  "modified_by": "Administrator",
  "module": "Flow",
  "name": "Flow Model",
@@ -104,7 +118,7 @@
   },
   {
    "read": 1,
-   "role": "Desk User"
+   "role": "Flow User"
   }
  ],
  "row_format": "Dynamic",

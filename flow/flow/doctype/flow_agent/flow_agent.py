@@ -30,6 +30,7 @@ class FlowAgent(Document):
 	from typing import TYPE_CHECKING
 
 	if TYPE_CHECKING:
+		from frappe.core.doctype.has_role.has_role import HasRole
 		from frappe.types import DF
 
 		from flow.flow.doctype.flow_agent_knowledge_base.flow_agent_knowledge_base import (
@@ -43,6 +44,7 @@ class FlowAgent(Document):
 		knowledge_bases: DF.TableMultiSelect[FlowAgentKnowledgeBase]
 		max_iterations: DF.Int
 		model: DF.Link
+		roles: DF.TableMultiSelect[HasRole]
 		title: DF.Data
 		tools: DF.TableMultiSelect[FlowAgentTool]
 	# end: auto-generated types
