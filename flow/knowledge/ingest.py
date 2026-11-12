@@ -16,6 +16,7 @@ derived index keyed by chunk name.
 from __future__ import annotations
 
 import hashlib
+from contextlib import suppress
 from typing import TYPE_CHECKING, cast
 
 import frappe
@@ -89,14 +90,21 @@ def _rebuild_single(doc: FlowKnowledgeSource, settings: FlowKnowledgeSettings) -
 	for extracted in extract(doc):
 		pieces.extend(chunk_text(extracted.text, chunk_size=size, overlap=overlap))
 
-	vectors = embed_texts(pieces)  # before the purge: a failed call keeps the old chunks searchable
-	purge_source(str(doc.name))
+	vectors = embed_texts(pieces)
 	if not pieces:
+		purge_source(str(doc.name))
 		return
 
+	# Everything fallible happens before the old chunks are removed: the new chunks are
+	# written first, then the old ones go, and the index is touched last because it cannot
+	# be rolled back. A failure leaves the old chunks searchable in both stores.
 	store.ensure_table_for_dimension(cint(settings.embedding_dimension))
+	old_ids = [
+		int(name) for name in frappe.get_all(CHUNK_DOCTYPE, filters={"source": doc.name}, pluck="name")
+	]
 
 	rows = []
+	new_ids: list[int] = []
 	for index, (piece, vector) in enumerate(zip(pieces, vectors, strict=True)):
 		chunk_doc = frappe.get_doc(
 			{
@@ -107,9 +115,10 @@ def _rebuild_single(doc: FlowKnowledgeSource, settings: FlowKnowledgeSettings) -
 				"content": piece,
 			}
 		).insert(ignore_permissions=True)
+		new_ids.append(int(str(chunk_doc.name)))
 		rows.append(
 			{
-				"id": int(str(chunk_doc.name)),
+				"id": new_ids[-1],
 				"kb": doc.knowledge_base,
 				"source": doc.name,
 				"content": piece,
@@ -117,7 +126,17 @@ def _rebuild_single(doc: FlowKnowledgeSource, settings: FlowKnowledgeSettings) -
 			}
 		)
 
-	store.add(rows)
+	try:
+		store.add(rows)
+		for start in range(0, len(old_ids), BATCH):
+			frappe.db.delete(CHUNK_DOCTYPE, {"name": ["in", old_ids[start : start + BATCH]]})
+		if old_ids:
+			store.delete(ids=old_ids)
+	except Exception:
+		# the caller rolls MariaDB back; take the new rows out of the index so it matches
+		with suppress(Exception):
+			store.delete(ids=new_ids)
+		raise
 
 
 def _embed_and_insert(doc: FlowKnowledgeSource, settings: FlowKnowledgeSettings, to_embed) -> None:

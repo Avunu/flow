@@ -3,11 +3,14 @@
 
 import json
 import os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from threading import Thread
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import patch
 
 import frappe
+import requests
 from frappe.core.doctype.file.file import File
 from frappe.desk.doctype.todo.todo import ToDo
 from frappe.tests import IntegrationTestCase
@@ -28,8 +31,8 @@ from flow.knowledge.extract import (
 	_extract_pdf_page,
 	_extract_url_source,
 	_extract_xlsx,
+	_public_address,
 	_render_rich_text,
-	_validate_public_url,
 	extract,
 )
 from flow.knowledge.ingest import (
@@ -42,6 +45,7 @@ from flow.knowledge.ingest import (
 from flow.knowledge.retriever import retrieve, retrieve_attachments
 
 DIM = 4
+PUBLIC_IP = "93.184.216.34"
 
 
 def _rows():
@@ -632,53 +636,100 @@ class TestExtract(IntegrationTestCase):
 			self.assertEqual(_extract_pdf_page(page), "Plain text")
 		ocr.assert_not_called()
 
-	def _fetch_url(self, response):
-		source = SimpleNamespace(url="https://example.com/page")
-		with (
-			patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("93.184.216.34", 0))]),
-			patch("requests.get", return_value=response) as get,
-		):
-			try:
-				return _extract_url_source(source), get
-			finally:
-				self.get = get
+	def _fetch_url(self, hostname="pinned.test", *, status=200, headers=None, body=b"<p>Hello page</p>"):
+		"""Fetch a URL on `hostname` from a local server.
+
+		The host resolves to `PUBLIC_IP` the first time and to loopback every time after (DNS
+		rebinding). Every connection urllib3 opens is recorded, then sent to the local server.
+		Returns (docs, addresses dialled, Host headers the server saw).
+		"""
+		import socket
+
+		from urllib3.util import connection
+
+		seen_hosts = []
+
+		class Handler(BaseHTTPRequestHandler):
+			def do_GET(self):
+				seen_hosts.append(self.headers["Host"])
+				self.send_response(status)
+				for name, value in (headers or {"Content-Type": "text/html"}).items():
+					self.send_header(name, value)
+				self.send_header("Content-Length", str(len(body)))
+				self.end_headers()
+				self.wfile.write(body)
+
+			def log_message(self, format, *args):
+				pass
+
+		server = HTTPServer(("127.0.0.1", 0), Handler)
+		port = server.server_port
+		Thread(target=server.serve_forever, daemon=True).start()
+
+		real_getaddrinfo = socket.getaddrinfo
+		real_create_connection = connection.create_connection
+		dialled = []
+		lookups = []
+
+		def getaddrinfo(host, *args, **kwargs):
+			if host == hostname:
+				lookups.append(host)
+				return [(2, 1, 6, "", (PUBLIC_IP if len(lookups) == 1 else "127.0.0.1", 0))]
+			return real_getaddrinfo(host, *args, **kwargs)
+
+		def create_connection(address, *args, **kwargs):
+			dialled.append(address)
+			return real_create_connection(("127.0.0.1", port), *args, **kwargs)
+
+		source = SimpleNamespace(url=f"http://{hostname}:{port}/page")
+		try:
+			with (
+				patch("socket.getaddrinfo", side_effect=getaddrinfo),
+				patch("urllib3.util.connection.create_connection", side_effect=create_connection),
+			):
+				docs = _extract_url_source(source)
+		finally:
+			server.shutdown()
+			server.server_close()
+		self.port = port
+		return docs, dialled, seen_hosts
+
+	def test_url_source_connects_to_the_validated_address(self):
+		docs, dialled, seen_hosts = self._fetch_url()
+		self.assertEqual([d.text for d in docs], ["Hello page"])
+		self.assertEqual(dialled, [(PUBLIC_IP, self.port)])
+		self.assertEqual(seen_hosts, [f"pinned.test:{self.port}"])
 
 	def test_url_source_does_not_follow_redirects(self):
-		response = SimpleNamespace(is_redirect=True, headers={"Location": "http://169.254.169.254/"})
 		with self.assertRaisesRegex(frappe.ValidationError, "redirects"):
-			self._fetch_url(response)
-		self.assertIs(self.get.call_args.kwargs["allow_redirects"], False)
+			self._fetch_url(status=302, headers={"Location": "http://169.254.169.254/"})
 
-	def test_url_source_reads_a_plain_response(self):
-		response = SimpleNamespace(
-			is_redirect=False,
-			headers={"Content-Type": "text/html"},
-			raise_for_status=lambda: None,
-			iter_content=lambda size: iter([b"<p>Hello page</p>"]),
-		)
-		docs, get = self._fetch_url(response)
-		self.assertEqual([d.text for d in docs], ["Hello page"])
-		self.assertIs(get.call_args.kwargs["allow_redirects"], False)
+	def test_url_source_refuses_an_http_error(self):
+		with self.assertRaises(requests.HTTPError):
+			self._fetch_url(status=500)
 
-	def test_validate_public_url_rejects_non_http_scheme(self):
+	def test_public_address_rejects_non_http_scheme(self):
 		with self.assertRaisesRegex(frappe.ValidationError, "http"):
-			_validate_public_url("ftp://example.com/x")
+			_public_address("ftp://example.com/x")
 
-	def test_validate_public_url_rejects_loopback(self):
-		with self.assertRaisesRegex(frappe.ValidationError, "non-public"):
-			_validate_public_url("http://127.0.0.1/")
+	def test_public_address_rejects_non_public_addresses(self):
+		for address in (
+			"127.0.0.1",
+			"10.0.0.5",
+			"169.254.169.254",  # cloud metadata
+			"100.64.0.1",  # shared address space
+			"100.100.100.200",  # Alibaba Cloud metadata
+			"[::1]",
+			"[::ffff:127.0.0.1]",
+			"[fd00:ec2::254]",
+		):
+			with self.subTest(address=address), self.assertRaisesRegex(frappe.ValidationError, "non-public"):
+				_public_address(f"http://{address}/")
 
-	def test_validate_public_url_rejects_private_ip(self):
-		with self.assertRaisesRegex(frappe.ValidationError, "non-public"):
-			_validate_public_url("http://10.0.0.5/")
-
-	def test_validate_public_url_rejects_metadata_ip(self):
-		with self.assertRaisesRegex(frappe.ValidationError, "non-public"):
-			_validate_public_url("http://169.254.169.254/latest/meta-data/")
-
-	def test_validate_public_url_accepts_public_host(self):
-		with patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("93.184.216.34", 0))]):
-			_validate_public_url("https://example.com/page")
+	def test_public_address_accepts_public_host(self):
+		with patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", (PUBLIC_IP, 0))]):
+			parsed, ip = _public_address("https://example.com/page")
+		self.assertEqual((parsed.hostname, ip), ("example.com", PUBLIC_IP))
 
 
 class TestIngest(IntegrationTestCase):
@@ -883,6 +934,57 @@ class TestIngest(IntegrationTestCase):
 
 		self.assertEqual(self._chunks(source.name), before)
 		self.assertEqual(self._lance_count(), lance_before)
+
+	def _lance_ids(self):
+		return sorted(store._open_table().to_arrow().column("id").to_pylist())
+
+	def _ingest_expecting_failure(self, source_name, vector, error):
+		with (
+			patch(
+				"litellm.embedding",
+				side_effect=lambda input, **kwargs: _embedding_response([vector] * len(input)),
+			),
+			patch.object(frappe.db, "commit"),
+			patch.object(frappe.db, "rollback"),
+			self.assertRaises(error),
+		):
+			ingest_source(source_name)
+
+	def test_wrong_vector_width_keeps_the_index(self):
+		source = self._make_source(content="Reset your password from the account settings page. " * 4)
+		self._ingest(source.name)
+		before = self._lance_ids()
+		self.assertEqual(before, [int(c["name"]) for c in self._chunks(source.name)])
+
+		self._ingest_expecting_failure(source.name, [0.1, 0.2, 0.3], ValueError)
+
+		self.assertEqual(self._lance_ids(), before)
+
+	def test_failed_index_write_keeps_the_index(self):
+		source = self._make_source(content="Reset your password from the account settings page. " * 4)
+		self._ingest(source.name)
+		before = self._lance_ids()
+
+		with patch("flow.knowledge.store.add", side_effect=RuntimeError("disk full")):
+			self._ingest_expecting_failure(source.name, [0.1, 0.2, 0.3, 0.4], RuntimeError)
+
+		self.assertEqual(self._lance_ids(), before)
+
+	def test_failed_index_cleanup_takes_the_new_rows_out_again(self):
+		source = self._make_source(content="Reset your password from the account settings page. " * 4)
+		self._ingest(source.name)
+		before = self._lance_ids()
+		real_delete = store.delete
+
+		def delete(**kwargs):
+			if sorted(kwargs.get("ids") or []) == before:
+				raise RuntimeError("index busy")
+			real_delete(**kwargs)
+
+		with patch("flow.knowledge.store.delete", side_effect=delete):
+			self._ingest_expecting_failure(source.name, [0.1, 0.2, 0.3, 0.4], RuntimeError)
+
+		self.assertEqual(self._lance_ids(), before)
 
 	def test_purge_source_is_safe_when_empty(self):
 		source = self._make_source(content="never ingested")
