@@ -1,3 +1,6 @@
+<!-- Copyright (c) 2026, Shrihari Mahabal and contributors
+For license information, please see license.txt-->
+
 # Notices
 
 Flow is licensed under the [GNU AGPLv3](license.txt).
