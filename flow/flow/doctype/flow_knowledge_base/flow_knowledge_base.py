@@ -1,6 +1,9 @@
 # Copyright (c) 2026, Frappe Technologies and contributors
 # License: MIT. See LICENSE
 
+from functools import partial
+
+import frappe
 from frappe.model.document import Document
 
 from flow.utils.system_generated import block_delete, block_rename, validate_immutable
@@ -39,4 +42,5 @@ class FlowKnowledgeBase(Document):
 	def after_rename(self, old: str, new: str, merge: bool = False) -> None:  # frappe-vulture:ignore
 		from flow.knowledge import store
 
-		store.rename_kb(old, new)
+		# the index is not transactional: move it only once the rename is committed
+		frappe.db.after_commit.add(partial(store.rename_kb, old, new))

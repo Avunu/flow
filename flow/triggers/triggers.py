@@ -152,6 +152,8 @@ def fire(
 	t = cast("FlowTrigger", frappe.get_doc("Flow Trigger", trigger))
 	if not t.enabled:
 		return None
+	if deleted_doc and frappe.db.exists(target_doctype, target_name):
+		return None  # the delete was rolled back: the job is queued on commit, not on the delete
 
 	# A trigger runs as its configured `run_as` user (falling back to the owner)
 	with _acting_as(t.run_as or t.owner):

@@ -154,9 +154,12 @@ def delete(*, kb: str | None = None, source: str | None = None, ids: list[int] |
 
 
 def rename_kb(old: str, new: str) -> None:
-	"""Move a renamed knowledge base's chunks to its new name."""
-	if table_exists():
-		_open_table().update(where=f"kb = {_quote(old)}", values={"kb": new})
+	"""Move a renamed knowledge base's chunks to its new name. Runs after the rename has committed."""
+	try:
+		if table_exists():
+			_open_table().update(where=f"kb = {_quote(old)}", values={"kb": new})
+	except Exception:
+		frappe.log_error(title="Knowledge index rename failed")
 
 
 def search(

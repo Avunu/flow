@@ -282,6 +282,20 @@ class TestDeletedDocument(IntegrationTestCase):
 		self.assertEqual(run.status, "Completed")
 		self.assertIsNone(run.reference_name)
 
+	def test_fire_skips_when_the_delete_was_rolled_back(self):
+		todo = cast(ToDo, frappe.get_doc({"doctype": "ToDo", "description": "survives"})).insert()
+
+		with patch.object(Model, "chat", return_value=_final("noted")) as chat:
+			run_name = fire(
+				str(self.trigger.name),
+				target_doctype="ToDo",
+				target_name=todo.name,
+				deleted_doc=todo.as_dict(),
+			)
+
+		self.assertIsNone(run_name)
+		chat.assert_not_called()
+
 	def test_fire_checks_the_condition_against_the_deleted_document(self):
 		self.trigger.condition = "doc.description == 'keep'"
 		self.trigger.save()

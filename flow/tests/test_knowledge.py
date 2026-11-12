@@ -736,9 +736,28 @@ class TestIngest(IntegrationTestCase):
 		store.ensure_table_for_dimension(DIM)
 		store.add([{**row, "kb": self.kb.name} for row in _rows()])
 		frappe.rename_doc("Flow Knowledge Base", self.kb.name, "Ingest KB Renamed")
+		frappe.db.after_commit.run()
 		hits = store.search([1.0, 0.0, 0.0, 0.0], kbs=["Ingest KB Renamed"], limit=5)
 		self.assertEqual(sorted(hit["id"] for hit in hits), [1, 2, 3])
 		self.assertEqual(store.search([1.0, 0.0, 0.0, 0.0], kbs=["Ingest KB"], limit=5), [])
+
+	def test_a_rolled_back_rename_leaves_the_chunks_under_the_old_name(self):
+		store.ensure_table_for_dimension(DIM)
+		store.add([{**row, "kb": self.kb.name} for row in _rows()])
+		frappe.rename_doc("Flow Knowledge Base", self.kb.name, "Ingest KB Renamed")
+		frappe.db.rollback()
+		hits = store.search([1.0, 0.0, 0.0, 0.0], kbs=["Ingest KB"], limit=5)
+		self.assertEqual(sorted(hit["id"] for hit in hits), [1, 2, 3])
+		self.assertEqual(store.search([1.0, 0.0, 0.0, 0.0], kbs=["Ingest KB Renamed"], limit=5), [])
+
+	def test_a_failing_index_rename_is_logged_not_raised(self):
+		store.ensure_table_for_dimension(DIM)
+		with (
+			patch.object(store, "_open_table", side_effect=RuntimeError("index down")),
+			patch("frappe.log_error") as log_error,
+		):
+			store.rename_kb("Ingest KB", "Ingest KB Renamed")
+		log_error.assert_called_once()
 
 	def test_renaming_a_knowledge_base_before_any_ingestion_is_fine(self):
 		self.assertFalse(store.table_exists())
