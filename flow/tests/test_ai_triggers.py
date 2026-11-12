@@ -20,7 +20,7 @@ from flow.flow.doctype.flow_trigger.flow_trigger import FlowTrigger
 from flow.lib.model import ChatResponse, Model
 from flow.permissions import FLOW_USER_ROLE
 from flow.tools.builtins import sync_builtin_tools
-from flow.triggers import dispatch, dispatch_scheduled, fire
+from flow.triggers import clear_trigger_cache, dispatch, dispatch_scheduled, fire
 
 
 def _model(**overrides: Any) -> dict:
@@ -216,6 +216,151 @@ class TestDispatch(IntegrationTestCase):
 			dispatch(doc, "after_insert")
 
 		enqueue.assert_not_called()
+
+
+class TestDeletedDocument(IntegrationTestCase):
+	"""An on_trash trigger runs after the document is gone, so the document travels with the job."""
+
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		sync_builtin_tools()
+		cls.enterClassContext(enable_safe_exec())
+
+	def setUp(self):
+		self.model = cast(FlowModel, frappe.get_doc(_model())).insert()
+		self.agent = cast(FlowAgent, frappe.get_doc(_agent(str(self.model.name)))).insert()
+		self.trigger = cast(
+			FlowTrigger,
+			frappe.get_doc(
+				_trigger(
+					str(self.agent.name),
+					doc_event="on_trash",
+					prompt_template="Deleted {{ doc.doctype }} {{ doc.description }}",
+				)
+			),
+		).insert()
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def test_dispatch_sends_the_deleted_document_with_the_job(self):
+		todo = cast(ToDo, frappe.get_doc({"doctype": "ToDo", "description": "going away"})).insert()
+
+		with patch("frappe.enqueue") as enqueue:
+			dispatch(todo, "on_trash")
+
+		deleted = enqueue.call_args.kwargs["deleted_doc"]
+		self.assertEqual(deleted["name"], todo.name)
+		self.assertEqual(deleted["description"], "going away")
+
+	def test_dispatch_sends_no_document_for_other_events(self):
+		self.trigger.doc_event = "after_insert"
+		self.trigger.save()
+		todo = cast(ToDo, frappe.get_doc({"doctype": "ToDo", "description": "stays"})).insert()
+
+		with patch("frappe.enqueue") as enqueue:
+			dispatch(todo, "after_insert")
+
+		self.assertIsNone(enqueue.call_args.kwargs["deleted_doc"])
+
+	def test_fire_renders_the_deleted_document_and_links_nothing(self):
+		todo = cast(ToDo, frappe.get_doc({"doctype": "ToDo", "description": "gone"})).insert()
+		deleted = todo.as_dict()
+		frappe.delete_doc("ToDo", todo.name, force=True)
+
+		with patch.object(Model, "chat", return_value=_final("noted")):
+			run_name = fire(
+				str(self.trigger.name),
+				target_doctype="ToDo",
+				target_name=todo.name,
+				deleted_doc=deleted,
+			)
+
+		run = cast(FlowRun, frappe.get_doc("Flow Run", run_name or ""))
+		self.assertEqual(run.input, "Deleted ToDo gone")
+		self.assertEqual(run.status, "Completed")
+		self.assertIsNone(run.reference_name)
+
+	def test_fire_skips_when_the_delete_was_rolled_back(self):
+		todo = cast(ToDo, frappe.get_doc({"doctype": "ToDo", "description": "survives"})).insert()
+
+		with patch.object(Model, "chat", return_value=_final("noted")) as chat:
+			run_name = fire(
+				str(self.trigger.name),
+				target_doctype="ToDo",
+				target_name=todo.name,
+				deleted_doc=todo.as_dict(),
+			)
+
+		self.assertIsNone(run_name)
+		chat.assert_not_called()
+
+	def test_fire_checks_the_condition_against_the_deleted_document(self):
+		self.trigger.condition = "doc.description == 'keep'"
+		self.trigger.save()
+		deleted = frappe.get_doc({"doctype": "ToDo", "name": "t1", "description": "other"}).as_dict()
+
+		with patch.object(Model, "chat", return_value=_final("noted")):
+			run_name = fire(
+				str(self.trigger.name), target_doctype="ToDo", target_name="t1", deleted_doc=deleted
+			)
+
+		self.assertIsNone(run_name)
+
+
+class TestTriggerCache(IntegrationTestCase):
+	def setUp(self):
+		sync_builtin_tools()
+		self.model = cast(FlowModel, frappe.get_doc(_model())).insert()
+		self.agent = cast(FlowAgent, frappe.get_doc(_agent(str(self.model.name)))).insert()
+		clear_trigger_cache()
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def _dispatch_count(self, doc: Document) -> int:
+		with patch("frappe.enqueue") as enqueue:
+			dispatch(doc, "after_insert")
+		return enqueue.call_count
+
+	def test_lookup_hits_the_table_once_per_doctype(self):
+		trigger = cast(FlowTrigger, frappe.get_doc(_trigger(str(self.agent.name)))).insert()
+		doc = _unsaved("ToDo", "todo-x")
+		self.assertEqual(self._dispatch_count(doc), 1)
+
+		# The row changes behind the cache's back; only the cache can still answer.
+		frappe.db.set_value("Flow Trigger", trigger.name, "enabled", 0)
+		self.assertEqual(self._dispatch_count(doc), 1)
+
+	def test_saving_a_trigger_refreshes_the_cache(self):
+		trigger = cast(FlowTrigger, frappe.get_doc(_trigger(str(self.agent.name)))).insert()
+		doc = _unsaved("ToDo", "todo-x")
+		self.assertEqual(self._dispatch_count(doc), 1)
+
+		trigger.enabled = 0
+		trigger.save()
+		self.assertEqual(self._dispatch_count(doc), 0)
+
+		trigger.enabled = 1
+		trigger.save()
+		self.assertEqual(self._dispatch_count(doc), 1)
+
+	def test_deleting_a_trigger_refreshes_the_cache(self):
+		trigger = cast(FlowTrigger, frappe.get_doc(_trigger(str(self.agent.name)))).insert()
+		doc = _unsaved("ToDo", "todo-x")
+		self.assertEqual(self._dispatch_count(doc), 1)
+
+		trigger.delete()
+		self.assertEqual(self._dispatch_count(doc), 0)
+
+	def test_rollback_drops_a_trigger_the_transaction_never_kept(self):
+		cast(FlowTrigger, frappe.get_doc(_trigger(str(self.agent.name)))).insert()
+		doc = _unsaved("ToDo", "todo-x")
+		self.assertEqual(self._dispatch_count(doc), 1)
+
+		frappe.db.rollback()
+		self.assertEqual(self._dispatch_count(doc), 0)
 
 
 class TestDispatchScheduled(IntegrationTestCase):

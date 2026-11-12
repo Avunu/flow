@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 import frappe
 from frappe import _
 from frappe.model.document import Document
+from frappe.model.naming import validate_name
 
 from flow.lib import cloudflare
 from flow.lib.model import provider_of, resolve_call_kwargs
@@ -58,6 +59,17 @@ class FlowModel(Document):
 		from flow.assistant import sync_builtin_assistant
 
 		sync_builtin_assistant(model=self.name)
+
+	def before_rename(self, old: str, new: str, merge: bool = False) -> None:  # frappe-vulture:ignore
+		# Move the setting here, so Frappe's update of the link doesn't treat the rename as a new
+		# embedding model (which would probe it and refuse while chunks exist).
+		embedding_model = frappe.get_cached_value(
+			"Flow Knowledge Settings", "Flow Knowledge Settings", "embedding_model"
+		)
+		if not merge and embedding_model == old:
+			frappe.db.set_single_value(
+				"Flow Knowledge Settings", "embedding_model", validate_name(self.doctype, new)
+			)
 
 	def _normalize(self):
 		for field in ("title", "model_id", "base_url"):

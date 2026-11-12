@@ -7,6 +7,8 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
+from flow.triggers import clear_trigger_cache
+
 DOC_EVENTS = frozenset({"after_insert", "on_update", "on_submit", "on_cancel", "on_trash"})
 
 
@@ -32,6 +34,12 @@ class FlowTrigger(Document):
 		target_doctype: DF.Link | None
 		title: DF.Data
 	# end: auto-generated types
+
+	def on_change(self):
+		clear_trigger_cache()
+
+	def on_trash(self):
+		clear_trigger_cache()
 
 	def validate(self):
 		self._validate_event_fields()
