@@ -13,11 +13,13 @@ from __future__ import annotations
 
 import json
 import mimetypes
-from typing import Any
+from typing import Any, cast
 
 import frappe
 import RestrictedPython.Guards
 from frappe import _
+from frappe.core.doctype.file.file import File
+from frappe.core.doctype.file.utils import find_file_by_url
 from frappe.core.utils import html2text
 from frappe.utils.inplacevar import protected_inplacevar
 from frappe.utils.safe_exec import (
@@ -45,12 +47,14 @@ from RestrictedPython import safe_globals
 def _gated_get_doc(*args: Any, **kwargs: Any) -> dict:
 	doc = frappe.get_doc(*args, **kwargs)
 	doc.check_permission("read")
+	doc.apply_fieldlevel_read_permissions()
 	return doc.as_dict()
 
 
 def _gated_get_last_doc(*args: Any, **kwargs: Any) -> dict:
 	doc = frappe.get_last_doc(*args, **kwargs)
 	doc.check_permission("read")
+	doc.apply_fieldlevel_read_permissions()
 	return doc.as_dict()
 
 
@@ -70,6 +74,31 @@ def _gated_attach_print(doctype: str, name: str, *args: Any, **kwargs: Any):
 	if not frappe.has_permission(doctype, "read", name):
 		raise frappe.PermissionError(_("No permission to read {0} {1}").format(doctype, name))
 	return frappe.attach_print(doctype, name, *args, **kwargs)
+
+
+def _readable_attachment(attachment: dict) -> dict:
+	"""The email queue fetches file and print attachments as Administrator, so check them now."""
+	attachment = dict(attachment)
+	fid, file_url = attachment.pop("fid", None), attachment.pop("file_url", None)
+	if fid or file_url:
+		file = cast(File, frappe.get_doc("File", str(fid))) if fid else find_file_by_url(str(file_url))
+		if not (file and file.is_downloadable()):
+			raise frappe.PermissionError(_("No permission to read file {0}").format(fid or file_url))
+		attachment["fid"] = file.name  # the queue fetches the file checked here
+	if attachment.get("print_format_attachment"):
+		doctype, name = attachment.get("doctype"), attachment.get("name")
+		if not (
+			isinstance(doctype, str)
+			and isinstance(name, str)
+			and frappe.has_permission(doctype, "read", name)
+		):
+			raise frappe.PermissionError(_("No permission to read {0} {1}").format(doctype, name))
+		attachment.pop("doc", None)  # print the checked record itself
+	return attachment
+
+
+def _gated_sendmail(*args: Any, attachments: list | None = None, **kwargs: Any):
+	return frappe.sendmail(*args, attachments=[_readable_attachment(a) for a in attachments or []], **kwargs)
 
 
 def _permissioned_get_list(doctype, *args, **kwargs):
@@ -101,9 +130,8 @@ def _permissioned_get_value(doctype, filters=None, fieldname="name", *, as_dict=
 
 
 def _permissioned_get_single_value(doctype: str, fieldname: str):
-	if not frappe.has_permission(doctype, "read"):
-		raise frappe.PermissionError(_("No permission to read {0}").format(doctype))
-	return frappe.db.get_single_value(doctype, fieldname)
+	# through the document so permlevels and masks apply, as for get_doc
+	return _gated_get_doc(doctype).get(fieldname)
 
 
 def _permissioned_exists(doctype, filters=None) -> bool:
@@ -154,7 +182,7 @@ def get_flow_safe_globals() -> NamespaceDict:
 			get_list=_permissioned_get_list,
 			get_print=_gated_get_print,
 			attach_print=_gated_attach_print,
-			sendmail=frappe.sendmail,
+			sendmail=_gated_sendmail,
 			log=frappe.log,
 			log_error=safer_log_error,
 			msgprint=frappe.msgprint,
