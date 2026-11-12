@@ -44,6 +44,19 @@ from frappe.utils.safe_exec import (
 from RestrictedPython import safe_globals
 
 
+def _permissioned_get_list(doctype, *args, **kwargs):
+	for unsafe in ("ignore_permissions", "ignore_user_permissions", "user"):
+		kwargs.pop(unsafe, None)
+	return frappe.get_list(
+		doctype,
+		*args,
+		ignore_permissions=False,
+		ignore_user_permissions=False,
+		user=frappe.session.user,
+		**kwargs,
+	)
+
+
 def _first_name(doctype: str, filters: Any, order_by: str | None = None) -> str:
 	"""Resolve filters to a name through get_list, so the query layer checks the filtered and ordered
 	fields against the user's permlevels (frappe.get_doc and get_last_doc would not)."""
@@ -142,19 +155,6 @@ def _gated_sendmail(attachments: list | None = None, **kwargs: Any):
 			_("frappe.sendmail does not accept {0} in this sandbox").format(", ".join(unsupported))
 		)
 	return frappe.sendmail(attachments=[_readable_attachment(a) for a in attachments or []], **kwargs)
-
-
-def _permissioned_get_list(doctype, *args, **kwargs):
-	for unsafe in ("ignore_permissions", "ignore_user_permissions", "user"):
-		kwargs.pop(unsafe, None)
-	return frappe.get_list(
-		doctype,
-		*args,
-		ignore_permissions=False,
-		ignore_user_permissions=False,
-		user=frappe.session.user,
-		**kwargs,
-	)
 
 
 def _permissioned_get_value(doctype, filters=None, fieldname="name", *, as_dict=False):
