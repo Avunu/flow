@@ -45,19 +45,19 @@ def _client_cache() -> ClientCache:
 	return cast("ClientCache", frappe.client_cache)
 
 
-def _doctype_triggers(target_doctype: str, doc_event: str) -> list:
-	triggers = _client_cache().get_value(
-		f"{CACHE_PREFIX}{target_doctype}", generator=lambda: _enabled_doctype_triggers(target_doctype)
-	)
-	return [t for t in triggers if t.doc_event == doc_event]
-
-
 def _enabled_doctype_triggers(target_doctype: str) -> list:
 	return frappe.get_all(
 		"Flow Trigger",
 		filters={"event": "DocType Event", "target_doctype": target_doctype, "enabled": 1},
 		fields=["name", "doc_event", "condition", "run_as", "owner"],
 	)
+
+
+def _doctype_triggers(target_doctype: str, doc_event: str) -> list:
+	triggers = _client_cache().get_value(
+		f"{CACHE_PREFIX}{target_doctype}", generator=lambda: _enabled_doctype_triggers(target_doctype)
+	)
+	return [t for t in triggers if t.doc_event == doc_event]
 
 
 def clear_trigger_cache() -> None:
