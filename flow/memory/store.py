@@ -118,7 +118,7 @@ def search(query: str, *, agent: str, user: str, limit: int) -> list[str]:
 
 def drop_table() -> None:
 	"""Drop the whole memories index. Disposable — rebuildable from the doctype rows.
-	Path is db_path()-scoped, so under `frappe.flags.in_test` it only touches lancedb_test."""
+	Path is db_path()-scoped, so under `frappe.flags.in_test` it only touches the throwaway test store."""
 	db = lancedb.connect(db_path())
 	if TABLE_NAME in db.list_tables().tables:
 		db.drop_table(TABLE_NAME)
