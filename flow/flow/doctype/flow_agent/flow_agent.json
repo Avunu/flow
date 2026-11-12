@@ -17,7 +17,9 @@
   "section_break_tools",
   "tools",
   "section_break_knowledge",
-  "knowledge_bases"
+  "knowledge_bases",
+  "section_break_access",
+  "roles"
  ],
  "fields": [
   {
@@ -101,11 +103,23 @@
    "fieldtype": "Table MultiSelect",
    "label": "Knowledge Bases",
    "options": "Flow Agent Knowledge Base"
+  },
+  {
+   "fieldname": "section_break_access",
+   "fieldtype": "Section Break",
+   "label": "Access"
+  },
+  {
+   "description": "Who can use this agent; empty means every Flow User.",
+   "fieldname": "roles",
+   "fieldtype": "Table MultiSelect",
+   "label": "Roles",
+   "options": "Has Role"
   }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-11-11 15:00:00.000000",
+ "modified": "2026-11-11 20:00:00.000000",
  "modified_by": "Administrator",
  "module": "Flow",
  "name": "Flow Agent",
@@ -124,7 +138,7 @@
   },
   {
    "read": 1,
-   "role": "Desk User"
+   "role": "Flow User"
   }
  ],
  "row_format": "Dynamic",

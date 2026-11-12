@@ -7,6 +7,8 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
+from flow.permissions import FLOW_USER_ROLE
+
 DOC_EVENTS = frozenset({"after_insert", "on_update", "on_submit", "on_cancel", "on_trash"})
 
 
@@ -48,11 +50,11 @@ class FlowTrigger(Document):
 				_("Run As must be an enabled user."),
 				title=_("Invalid Run As"),
 			)
-		# The agent, its models and its runs are readable by desk users only, so a user without the
-		# Desk User role (a website user) could not run the agent when the trigger fires.
-		if "Desk User" not in frappe.get_roles(self.run_as):
+		# The agent, its models and its runs are readable by Flow Users only, so a user without the
+		# Flow User role could not run the agent when the trigger fires.
+		if FLOW_USER_ROLE not in frappe.get_roles(self.run_as):
 			frappe.throw(
-				_("Run As must be a desk user (a user with the Desk User role)."),
+				_("Run As must be a Flow User (a user with the Flow User role)."),
 				title=_("Invalid Run As"),
 			)
 
