@@ -13,10 +13,13 @@ from typing import TYPE_CHECKING, cast
 
 import frappe
 from frappe import _
+from requests.adapters import HTTPAdapter
 
 from flow.utils.errors import throw
 
 if TYPE_CHECKING:
+	from urllib.parse import ParseResult
+
 	from frappe.core.doctype.file.file import File
 
 TEXT_EXTENSIONS = {"txt", "text", "md", "markdown", "csv", "tsv", "log", "rst", "json", "yaml", "yml"}
@@ -116,7 +119,9 @@ def _extract_pdf_page(page) -> str:
 	# OCR once per page, including embedded scans in otherwise searchable PDFs.
 	# A page can hold many small image objects; OCRing each separately repeats the
 	# expensive inference and can turn a one-page attachment into a minute-long wait.
-	# Duplicated text on searchable PDFs is acceptable; missing text is not.
+	# Duplicated text on searchable PDFs is acceptable; missing text is not. The cost is that
+	# a searchable page with any image (a logo, a stamp) is OCRed in full and its text indexed
+	# twice, which adds index size and embedding cost.
 	if page.images:
 		parts.append(_ocr_image(_render_page_png(page)))
 
@@ -216,8 +221,13 @@ def _extract_file_source(source) -> list[ExtractedDoc]:
 	return _single(extract_file(cast("File", frappe.get_doc("File", file_name))))
 
 
-def _validate_public_url(url: str) -> None:
-	"""Block non-http(s) schemes and hosts that resolve to internal addresses (SSRF)."""
+def _public_address(url: str) -> tuple[ParseResult, str]:
+	"""Parse `url` and resolve its host once, refusing anything that is not a public address.
+
+	Returns the parsed URL and the validated IP. The fetch connects to that IP, so the
+	address that was checked is the address that is used (a second lookup could be answered
+	differently, DNS rebinding).
+	"""
 	import ipaddress
 	import socket
 	from urllib.parse import urlparse
@@ -235,15 +245,29 @@ def _validate_public_url(url: str) -> None:
 
 	for info in infos:
 		ip = ipaddress.ip_address(info[4][0])
-		if (
-			ip.is_private
-			or ip.is_loopback
-			or ip.is_link_local
-			or ip.is_reserved
-			or ip.is_multicast
-			or ip.is_unspecified
-		):
+		# not is_global also covers ranges that are neither private nor global, such as the
+		# shared address space 100.64.0.0/10 (carrier NAT, some cloud metadata endpoints)
+		if not ip.is_global or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
 			frappe.throw(_("URL resolves to a non-public address."), title=_("Blocked URL"))
+	return parsed, str(infos[0][4][0])
+
+
+class _PinnedAdapter(HTTPAdapter):
+	"""Connect to the IP in the request URL while TLS still names and checks the original host."""
+
+	def __init__(self, hostname: str):
+		self._hostname = hostname
+		super().__init__()
+
+	def init_poolmanager(self, connections, maxsize, block=False, **pool_kwargs):
+		super().init_poolmanager(
+			connections,
+			maxsize,
+			block=block,
+			server_hostname=self._hostname,
+			assert_hostname=self._hostname,
+			**pool_kwargs,
+		)
 
 
 def _read_capped(response) -> bytes:
@@ -261,20 +285,30 @@ def _extract_url_source(source) -> list[ExtractedDoc]:
 	import requests
 
 	url = (source.url or "").strip()
-	_validate_public_url(url)
-	# a redirect could point a validated public URL at an internal service
-	response = requests.get(
-		url,
-		timeout=URL_TIMEOUT,
-		stream=True,
-		allow_redirects=False,
-		headers={"User-Agent": "Flow-Knowledge/1.0"},
-	)
-	if response.is_redirect:
-		frappe.throw(_("The URL redirects; enter the address it leads to."), title=_("Invalid URL"))
-	response.raise_for_status()
+	parsed, ip = _public_address(url)
+	# Connect to the address that was validated, keeping the Host header and TLS name of the
+	# original URL. Redirects are refused: one could point a public URL at an internal service.
+	address = f"[{ip}]" if ":" in ip else ip
+	userinfo, at, host = parsed.netloc.rpartition("@")
+	port = f":{parsed.port}" if parsed.port else ""
+	pinned = parsed._replace(netloc=f"{userinfo}{at}{address}{port}").geturl()
 
-	raw = _read_capped(response)
+	adapter = _PinnedAdapter(parsed.hostname or "")
+	with requests.Session() as session:
+		session.mount("http://", adapter)
+		session.mount("https://", adapter)
+		response = session.get(
+			pinned,
+			timeout=URL_TIMEOUT,
+			stream=True,
+			allow_redirects=False,
+			headers={"User-Agent": "Flow-Knowledge/1.0", "Host": host},
+		)
+		if response.is_redirect:
+			frappe.throw(_("The URL redirects; enter the address it leads to."), title=_("Invalid URL"))
+		response.raise_for_status()
+		raw = _read_capped(response)
+
 	content_type = response.headers.get("Content-Type", "").lower()
 	if "application/pdf" in content_type or url.split("?")[0].lower().endswith(".pdf"):
 		text = _extract_pdf(raw)

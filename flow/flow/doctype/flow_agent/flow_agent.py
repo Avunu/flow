@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
+from functools import partial
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 import frappe
@@ -54,6 +55,12 @@ class FlowAgent(Document):
 
 	def before_rename(self, old: str, _new: str, _merge: bool = False) -> None:
 		block_rename(self, old)
+
+	def after_rename(self, old: str, new: str, _merge: bool = False) -> None:  # frappe-vulture:ignore
+		from flow.memory import store
+
+		# the index is not transactional: move it only once the rename is committed
+		frappe.db.after_commit.add(partial(store.rename_agent, old, new))
 
 	def before_insert(self):
 		if not self.tools:
