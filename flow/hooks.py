@@ -46,6 +46,28 @@ scheduler_events = {
 	},
 }
 
-after_migrate = ["flow.assistant.sync_builtin_assistant"]  # frappe-vulture:ignore
+after_install = ["flow.permissions.ensure_flow_role"]
+after_migrate = [
+	"flow.permissions.ensure_flow_role",
+	"flow.assistant.sync_builtin_assistant",  # frappe-vulture:ignore
+]
+
+# Flow Users see their own sessions, runs and personal memories, and the agents and models their
+# roles allow; the has_permission hooks are the single-document side of these list conditions.
+permission_query_conditions = {
+	"Flow Session": "flow.permissions.session_query_conditions",
+	"Flow Run": "flow.permissions.session_query_conditions",
+	"Flow Agent Memory": "flow.permissions.memory_query_conditions",
+	"Flow Agent": "flow.permissions.role_query_conditions",
+	"Flow Model": "flow.permissions.role_query_conditions",
+}
+
+has_permission = {
+	"Flow Session": "flow.permissions.has_session_permission",
+	"Flow Run": "flow.permissions.has_session_permission",
+	"Flow Agent Memory": "flow.permissions.has_memory_permission",
+	"Flow Agent": "flow.permissions.has_role_permission",
+	"Flow Model": "flow.permissions.has_role_permission",
+}
 
 extend_bootinfo = "flow.boot.boot_session"

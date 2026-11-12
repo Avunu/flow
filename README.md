@@ -130,6 +130,12 @@ bench --site site-name install-app flow
 
 Then add a `Flow Provider` with your API key and a `Flow Model` with a model ID such as `anthropic/claude-sonnet-4-6`, and open the Desk Flow panel to start. For local providers like Ollama or LM Studio, set `Base URL` on the provider or model. For Cloudflare Workers AI, see [Cloudflare Workers AI](#cloudflare-workers-ai).
 
+## Access
+
+Using Flow needs the `Flow User` role, which the app creates on install and migrate. Flow Users read the enabled agents and models and keep their own sessions and runs; System Managers set Flow up. Sessions, runs and personal memories are private to their owner, so a System Manager sees another user's chats only when a trigger started them. A `Flow Agent` or `Flow Model` with roles under Access is only for users holding one of those roles; with none it is open to every Flow User, and User Permissions narrow both further. A trigger's Run As user must hold the `Flow User` role.
+
+Flow used to be open to every Desk User. `bench migrate` runs the `grant_flow_role` patch, which gives the role to every enabled System User so nobody loses access; remove it from the users who should not have it afterwards. Users whose roles come from role profiles get a `Flow User` role profile added, because Frappe drops roles outside a user's profiles when it saves them.
+
 ## Cloudflare Workers AI
 
 Flow runs Cloudflare-hosted models (`@cf/...`, for example `@cf/zai-org/glm-5.3-flash`) and their embedding models directly. One Cloudflare account serves the whole site, so it is configured once, on a `Flow Provider` named `cloudflare`.
