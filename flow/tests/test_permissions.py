@@ -5,6 +5,7 @@ from typing import cast
 from unittest.mock import patch
 
 import frappe
+from frappe import share
 from frappe.core.doctype.user.user import User
 from frappe.tests import IntegrationTestCase
 
@@ -285,6 +286,86 @@ class TestAgentAndModelRoles(FlowPermissionCase):
 		with self.assertRaises(frappe.PermissionError):
 			self.agent.assemble()
 		self.assertIsNotNone(self.agent.assemble(model=other.name))
+
+
+class TestOutsideTheRole(FlowPermissionCase):
+	"""Paths other than a plain list or check: Guests, child tables, odd role names and shares."""
+
+	def test_the_workspace_is_for_flow_users_and_system_managers(self):
+		roles = set(
+			frappe.get_all("Has Role", filters={"parent": "Flow", "parenttype": "Workspace"}, pluck="role")
+		)
+
+		self.assertEqual(roles, {FLOW_USER_ROLE, "System Manager"})
+
+	def test_guests_and_website_users_are_denied_every_list(self):
+		website = _user("flow-perm-website@example.com")
+		for user in ("Guest", website):
+			for doctype in ("Flow Session", "Flow Run", "Flow Agent", "Flow Model", "Flow Agent Memory"):
+				with self.assertRaises(frappe.PermissionError, msg=f"{user} {doctype}"):
+					frappe.get_list(doctype, user=user)
+
+	def test_a_flow_user_cannot_list_anothers_session_messages(self):
+		theirs = _session(self.other_flow_user)
+		theirs.append("messages", {"role": "user", "content": "private words"})
+		theirs.save(ignore_permissions=True)
+		mine = _session(self.flow_user)
+		mine.append("messages", {"role": "user", "content": "my words"})
+		mine.save(ignore_permissions=True)
+
+		for doctype in ("Flow Session Message", "Flow Session Attachment"):
+			rows = frappe.get_list(
+				doctype, parent_doctype="Flow Session", fields=["parent"], user=self.flow_user
+			)
+			self.assertNotIn(theirs.name, {row.parent for row in rows}, doctype)
+		rows = frappe.get_list(
+			"Flow Session Message", parent_doctype="Flow Session", fields=["content"], user=self.flow_user
+		)
+		self.assertEqual([row.content for row in rows], ["my words"])
+
+	def test_a_role_name_with_quotes_does_not_break_the_list_conditions(self):
+		role = "Flow \\'quoted\" role"
+		frappe.get_doc({"doctype": "Role", "role_name": role}).insert(ignore_permissions=True)
+		user = _user("flow-perm-quoted@example.com", FLOW_USER_ROLE, role)
+		model = cast(
+			FlowModel,
+			frappe.get_doc(
+				{
+					"doctype": "Flow Model",
+					"title": "Quote Model",
+					"model_id": "openai/gpt-4o-mini",
+					"enabled": 1,
+				}
+			),
+		).insert()
+		open_agent = cast(
+			FlowAgent,
+			frappe.get_doc(
+				{
+					"doctype": "Flow Agent",
+					"title": "Quote Agent",
+					"model": model.name,
+					"instructions": "x",
+					"enabled": 1,
+				}
+			),
+		).insert()
+
+		self.assertIn(open_agent.name, _listed("Flow Agent", user))
+		self.assertIn(model.name, _listed("Flow Model", user))
+
+	def test_a_share_lets_a_user_without_the_role_read_that_one_session(self):
+		# Frappe turns a controller denial into a grant when a DocShare exists. Only users who
+		# hold the share right (System Managers) can create one, and it covers the one record.
+		session = _session(self.flow_user)
+		other = _session(self.flow_user)
+		share.add_docshare(
+			"Flow Session", session.name, self.desk, read=1, flags={"ignore_share_permission": True}
+		)
+
+		self.assertTrue(frappe.has_permission(session, "read", user=self.desk))
+		self.assertFalse(frappe.has_permission(other, "read", user=self.desk))
+		self.assertFalse(frappe.has_permission(session, "write", user=self.desk))
 
 
 class TestApiNeedsTheRole(FlowPermissionCase):

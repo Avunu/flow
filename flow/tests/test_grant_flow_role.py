@@ -1,7 +1,10 @@
 # Copyright (c) 2026, Frappe Technologies and contributors
 # License: MIT. See LICENSE
 
+from unittest.mock import patch
+
 import frappe
+from frappe.core.doctype.user.user import User
 from frappe.tests import IntegrationTestCase
 
 from flow.patches import grant_flow_role
@@ -12,6 +15,8 @@ DISABLED = "grant-flow-disabled@example.com"
 WEBSITE = "grant-flow-website@example.com"
 PROFILED = "grant-flow-profiled@example.com"
 HOLDER = "grant-flow-holder@example.com"
+DRIFTED = "grant-flow-drifted@example.com"
+BROKEN = "grant-flow-broken@example.com"
 
 
 def _user(email: str, *roles: str, enabled: int = 1, **values) -> str:
@@ -116,3 +121,52 @@ class TestGrantFlowRole(IntegrationTestCase):
 
 		with self.assertRaisesRegex(frappe.ValidationError, "already exists with other roles"):
 			grant_flow_role.execute()
+
+	def _reporters_profile(self):
+		frappe.get_doc(
+			{
+				"doctype": "Role Profile",
+				"role_profile": "Grant Flow Reporters",
+				"roles": [{"role": "Report Manager"}],
+			}
+		).insert(ignore_permissions=True)
+
+	def test_a_profiled_user_keeps_roles_outside_their_profiles(self):
+		self._reporters_profile()
+		frappe.get_doc({"doctype": "Role", "role_name": "Grant Flow Extra"}).insert(ignore_permissions=True)
+		drifted = _user(DRIFTED, role_profiles=[{"role_profile": "Grant Flow Reporters"}])
+		# a role the profile does not grant, as on sites where profiles used to only prefill roles
+		frappe.get_doc(
+			{
+				"doctype": "Has Role",
+				"parent": drifted,
+				"parenttype": "User",
+				"parentfield": "roles",
+				"role": "Grant Flow Extra",
+			}
+		).insert(ignore_permissions=True)
+		self.assertIn("Grant Flow Extra", frappe.get_roles(drifted))
+
+		grant_flow_role.execute()
+		frappe.get_doc("User", drifted).save()
+
+		self.assertTrue(
+			{"Report Manager", "Grant Flow Extra", FLOW_USER_ROLE} <= set(frappe.get_roles(drifted))
+		)
+
+	def test_one_users_failure_is_logged_and_the_rest_are_granted(self):
+		broken = _user(BROKEN, "Report Manager")
+		desk = _user(DESK, "Report Manager")
+		add_roles = User.add_roles
+
+		def add(user, *roles):
+			if user.name == broken:
+				frappe.throw("bad legacy row")
+			return add_roles(user, *roles)
+
+		with patch.object(User, "add_roles", add):
+			grant_flow_role.execute()
+
+		self.assertTrue(_holds(desk))
+		self.assertFalse(_holds(broken))
+		self.assertTrue(frappe.db.exists("Error Log", {"method": f"Flow User role not granted to {broken}"}))

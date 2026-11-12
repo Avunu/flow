@@ -321,6 +321,21 @@ class TestFlowTriggerIdentity(IntegrationTestCase):
 		super().setUpClass()
 		sync_builtin_tools()
 
+	def _plain_user(self, email: str, *roles: str) -> str:
+		return str(
+			frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": email,
+					"first_name": email.split("@")[0],
+					"roles": [{"role": role} for role in roles],
+					"send_welcome_email": 0,
+				}
+			)
+			.insert(ignore_permissions=True)
+			.name
+		)
+
 	def setUp(self):
 		self.model = cast(FlowModel, frappe.get_doc(_model())).insert()
 		self.agent = cast(FlowAgent, frappe.get_doc(_agent(str(self.model.name)))).insert()
@@ -340,6 +355,7 @@ class TestFlowTriggerIdentity(IntegrationTestCase):
 			.insert(ignore_permissions=True)
 			.name
 		)
+		self.flow_only = self._plain_user("trigger-flow-only@example.com", FLOW_USER_ROLE)
 		self.todo = cast(ToDo, frappe.get_doc({"doctype": "ToDo", "description": "identity probe"})).insert()
 
 	def tearDown(self):
@@ -357,25 +373,57 @@ class TestFlowTriggerIdentity(IntegrationTestCase):
 			triggers.fire(trig.name, target_doctype="ToDo", target_name=self.todo.name)
 		return seen[0]
 
-	def test_run_as_must_hold_the_flow_user_role(self):
-		desk_user = (
-			frappe.get_doc(
-				{
-					"doctype": "User",
-					"email": "trigger-desk@example.com",
-					"first_name": "Desk",
-					"roles": [{"role": "Report Manager"}],
-					"send_welcome_email": 0,
-				}
-			)
-			.insert(ignore_permissions=True)
-			.name
-		)
+	def _restrict(self, doc, role: str = "Report Manager") -> None:
+		doc.append("roles", {"role": role})
+		doc.save()
+
+	def test_run_as_must_be_able_to_read_the_agent(self):
+		desk_user = self._plain_user("trigger-desk@example.com", "Report Manager")
 		self.assertIn("Desk User", frappe.get_roles(desk_user))
 		self.assertNotIn(FLOW_USER_ROLE, frappe.get_roles(desk_user))
 
-		with self.assertRaisesRegex(frappe.ValidationError, "Flow User"):
+		with self.assertRaisesRegex(frappe.ValidationError, "cannot use Flow Agent"):
 			frappe.get_doc(_trigger(str(self.agent.name), run_as=desk_user)).insert()
+
+	def test_run_as_must_hold_a_role_of_a_restricted_agent(self):
+		self._restrict(self.agent)
+
+		with self.assertRaisesRegex(frappe.ValidationError, "cannot use Flow Agent"):
+			frappe.get_doc(_trigger(str(self.agent.name), run_as=self.flow_only)).insert()
+		self.assertTrue(frappe.get_doc(_trigger(str(self.agent.name), run_as=self.user)).insert())
+
+	def test_run_as_must_hold_a_role_of_the_agents_restricted_model(self):
+		self._restrict(self.model)
+
+		with self.assertRaisesRegex(frappe.ValidationError, "cannot use Flow Model"):
+			frappe.get_doc(_trigger(str(self.agent.name), run_as=self.flow_only)).insert()
+		self.assertTrue(frappe.get_doc(_trigger(str(self.agent.name), run_as=self.user)).insert())
+
+	def test_the_owner_who_runs_the_trigger_must_be_able_to_read_the_agent(self):
+		self._restrict(self.agent)
+		trig = cast(FlowTrigger, frappe.get_doc(_trigger(str(self.agent.name))))
+		trig.owner = self.flow_only
+
+		with self.assertRaisesRegex(frappe.ValidationError, "cannot use Flow Agent"):
+			trig.validate()
+		trig.owner = str(self.user)
+		trig.validate()
+
+	def test_a_system_manager_may_be_run_as_without_the_flow_user_role(self):
+		manager = self._plain_user("trigger-manager@example.com", "System Manager")
+		self.assertNotIn(FLOW_USER_ROLE, frappe.get_roles(manager))
+		self._restrict(self.agent)
+
+		self.assertTrue(frappe.get_doc(_trigger(str(self.agent.name), run_as=manager)).insert())
+
+	def test_a_trigger_whose_user_was_disabled_can_still_be_switched_off(self):
+		trig = cast(FlowTrigger, frappe.get_doc(_trigger(str(self.agent.name), run_as=self.user)))
+		frappe.db.set_value("User", self.user, "enabled", 0)
+
+		with self.assertRaisesRegex(frappe.ValidationError, "enabled user"):
+			trig.validate()
+		trig.enabled = 0
+		trig.validate()
 
 	def test_fire_runs_as_run_as_user(self):
 		trig = cast(FlowTrigger, frappe.get_doc(_trigger(str(self.agent.name), run_as=self.user))).insert()
