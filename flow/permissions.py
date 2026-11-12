@@ -14,7 +14,7 @@
 - Ownership: sessions, runs and personal memories are private to their owner, since a session's
   tools run as them. System Managers also see Trigger sessions and runs.
 
-Triggers run as their run_as account or owner, which must be able to read the agent."""
+Triggers run as their run_as account or owner, which must be able to read the agent and its model."""
 
 from __future__ import annotations
 

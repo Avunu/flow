@@ -159,7 +159,14 @@
  "parent_page": "",
  "public": 1,
  "quick_lists": [],
- "roles": [],
+ "roles": [
+  {
+   "role": "Flow User"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
  "sequence_id": 1.0,
  "shortcuts": [
   {

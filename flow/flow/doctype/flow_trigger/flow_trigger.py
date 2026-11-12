@@ -7,7 +7,6 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
-from flow.permissions import FLOW_USER_ROLE
 from flow.triggers import clear_trigger_cache
 
 DOC_EVENTS = frozenset({"after_insert", "on_update", "on_submit", "on_cancel", "on_trash"})
@@ -50,20 +49,29 @@ class FlowTrigger(Document):
 		self._validate_run_as()
 
 	def _validate_run_as(self):
-		if not self.run_as:
+		# checked only while on, so a trigger whose user is gone can still be switched off
+		if not self.enabled:
 			return
-		if self.run_as == "Guest" or not frappe.db.get_value("User", self.run_as, "enabled"):
+		if self.run_as and (
+			self.run_as == "Guest" or not frappe.db.get_value("User", self.run_as, "enabled")
+		):
 			frappe.throw(
 				_("Run As must be an enabled user."),
 				title=_("Invalid Run As"),
 			)
-		# The agent, its models and its runs are readable by Flow Users only, so a user without the
-		# Flow User role could not run the agent when the trigger fires.
-		if FLOW_USER_ROLE not in frappe.get_roles(self.run_as):
-			frappe.throw(
-				_("Run As must be a Flow User (a user with the Flow User role)."),
-				title=_("Invalid Run As"),
-			)
+		# Link validation reports an unknown agent
+		model = frappe.db.get_value("Flow Agent", self.agent, "model")
+		if model is None:
+			return
+		# The run account (else the owner) must be able to read the agent and its model, or the
+		# trigger would fail in the background worker instead of being refused here.
+		account = self.run_as or self.owner or frappe.session.user
+		for doctype, name in (("Flow Agent", self.agent), ("Flow Model", model)):
+			if not frappe.has_permission(doctype, "read", name, user=account):
+				frappe.throw(
+					_("{0} cannot use {1} {2}.").format(account, doctype, name),
+					title=_("Invalid Run As"),
+				)
 
 	def _validate_event_fields(self):
 		if self.event == "DocType Event":
