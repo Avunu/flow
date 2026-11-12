@@ -50,7 +50,7 @@ Flow also ships as a Python framework for building agents in code.
 
 | DocType                                         | Purpose                                                                   |
 | ----------------------------------------------- | ------------------------------------------------------------------------- |
-| `Flow Provider`                                 | Provider-level credentials and endpoint settings                          |
+| `Flow Provider`                                 | Provider-level credentials and endpoint settings (including Cloudflare)   |
 | `Flow Model`                                    | Model configuration — set a `model_id` like `anthropic/claude-sonnet-4-6` |
 | `Flow Tool`                                     | Reusable tools, defined as a module path or inline script                 |
 | `Flow Agent`                                    | Instructions, model, and tools — configurable from the Desk or in code    |
@@ -128,7 +128,34 @@ bench get-app flow
 bench --site site-name install-app flow
 ```
 
-Then add a `Flow Provider` with your API key and a `Flow Model` with a model ID such as `anthropic/claude-sonnet-4-6`, and open the Desk Flow panel to start. For local providers like Ollama or LM Studio, set `Base URL` on the provider or model.
+Then add a `Flow Provider` with your API key and a `Flow Model` with a model ID such as `anthropic/claude-sonnet-4-6`, and open the Desk Flow panel to start. For local providers like Ollama or LM Studio, set `Base URL` on the provider or model. For Cloudflare Workers AI, see [Cloudflare Workers AI](#cloudflare-workers-ai).
+
+## Cloudflare Workers AI
+
+Flow runs Cloudflare-hosted models (`@cf/...`, for example `@cf/zai-org/glm-5.3-flash`) and their embedding models directly. One Cloudflare account serves the whole site, so it is configured once, on a `Flow Provider` named `cloudflare`.
+
+1. Create an API token in the Cloudflare dashboard (_My Profile > API Tokens > Create Token > Custom token_), limited to the one account, with exactly these permissions:
+
+   | Permission                  | Needed for                                                    |
+   | --------------------------- | ------------------------------------------------------------- |
+   | Account > Workers AI > Read | Calling models and reading the model catalogue                |
+   | Account > AI Gateway > Run  | Only if you set a Gateway ID and the gateway is authenticated |
+
+   Never grant a Write permission: Flow does not need one. Note that AI Gateway Run lets a token use every gateway in the account.
+
+2. Add a `Flow Provider` with Provider `cloudflare`, your **Account ID** (32 hexadecimal characters, on the account home page of the dashboard) and the token as **API Key**.
+   - **Gateway ID** is optional. Calls work without it; set it to route requests through an [AI Gateway](https://developers.cloudflare.com/ai-gateway/) for logging and caching. The gateway stores request and response payloads by default; to stop that, put `{"extra_headers": {"cf-aig-collect-log-payload": "false"}}` in the provider's Extra Params (only `cf-aig-*` gateway controls are accepted as extra headers, and Cloudflare params are limited to request settings such as `temperature`, `max_tokens` and `reasoning_effort`: `headers` and `extra_body` are refused).
+   - **Base URL** is an advanced override of `https://api.cloudflare.com/client/v4/accounts/<account>/ai/v1`. It must use https outside developer mode.
+3. Press **Test Connection** (reads the model catalogue with your token, no inference is spent) and **Sync Models**.
+4. Add a `Flow Model` with Provider `cloudflare` and a model such as `@cf/zai-org/glm-5.3-flash` (stored as `cloudflare/@cf/zai-org/glm-5.3-flash`). The endpoint and token come from the provider, so a Cloudflare model cannot carry its own. Embedding models such as `@cf/baai/bge-m3` work as the knowledge base's embedding model.
+
+The model's **Context Window** is read from the Cloudflare catalogue when you add it or change its id, and you can type your own value. The form warns when the catalogue marks a model as deprecated or about to be, and shows the `reasoning_effort` values a model accepts (GLM 5.3 requires one of `max`, `high` or `low`; Flow rejects any other value in the model's Params).
+
+Only Cloudflare-hosted models are supported on this provider. Other vendors keep using their own provider, key and base URL.
+
+### Upgrading from the `openai/@cf/...` workaround
+
+`bench migrate` runs the `migrate_cloudflare_models` patch. It moves models of the form `openai/@cf/...` that carry their own Cloudflare Base URL and API key onto the `cloudflare` provider (taking the account id from the old URL, clearing the per-model URL and key, and keeping the provider's token), and renames a provider row called `Cloudflare` to `cloudflare`. Model names and context windows are kept. A model whose Base URL is not a Cloudflare endpoint, that uses another Cloudflare account or gateway than the provider's, whose token differs from the provider's (a model's token never replaces the provider's) or that has its own extra headers is left as it was and logged by name; it keeps working until you edit its id. If your model's token is the working one, put it on the `cloudflare` provider first. After fixing the provider you can run the patch again with `bench --site <site> execute flow.patches.migrate_cloudflare_models.execute`.
 
 ## License
 

@@ -68,30 +68,30 @@ class TestProviderCredentialResolution(IntegrationTestCase):
 	def test_model_resolves_key_from_provider(self):
 		frappe.get_doc(_provider(api_key="sk-from-provider")).insert()
 		m = cast(FlowModel, frappe.get_doc(_model())).insert()
-		self.assertEqual(Model(m.name)._api_key, "sk-from-provider")
+		self.assertEqual(Model(m.name).call_kwargs["api_key"], "sk-from-provider")
 
 	def test_model_own_key_overrides_provider(self):
 		frappe.get_doc(_provider(api_key="sk-from-provider")).insert()
 		m = cast(FlowModel, frappe.get_doc(_model(api_key="sk-on-model"))).insert()
-		self.assertEqual(Model(m.name)._api_key, "sk-on-model")
+		self.assertEqual(Model(m.name).call_kwargs["api_key"], "sk-on-model")
 
 	def test_disabled_provider_not_used(self):
 		frappe.get_doc(_provider(api_key="sk-from-provider", enabled=0)).insert()
 		m = cast(FlowModel, frappe.get_doc(_model())).insert()
-		self.assertIsNone(Model(m.name)._api_key)
+		self.assertIsNone(Model(m.name).call_kwargs["api_key"])
 
 	def test_no_provider_row_leaves_key_empty(self):
 		m = cast(FlowModel, frappe.get_doc(_model())).insert()
-		self.assertIsNone(Model(m.name)._api_key)
+		self.assertIsNone(Model(m.name).call_kwargs["api_key"])
 
 	def test_provider_base_url_used_when_model_has_none(self):
 		frappe.get_doc(_provider(base_url="http://gateway.local")).insert()
 		m = cast(FlowModel, frappe.get_doc(_model())).insert()
-		self.assertEqual(Model(m.name).base_url, "http://gateway.local")
+		self.assertEqual(Model(m.name).call_kwargs["api_base"], "http://gateway.local")
 
 	def test_provider_extra_params_merged_model_wins(self):
 		frappe.get_doc(_provider(extra_params='{"api_version": "v1", "temperature": 0.1}')).insert()
 		m = cast(FlowModel, frappe.get_doc(_model(params='{"temperature": 0.9}'))).insert()
-		model = Model(m.name)
-		self.assertEqual(model.params["api_version"], "v1")
-		self.assertEqual(model.params["temperature"], 0.9)
+		kwargs = Model(m.name).call_kwargs
+		self.assertEqual(kwargs["api_version"], "v1")
+		self.assertEqual(kwargs["temperature"], 0.9)

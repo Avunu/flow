@@ -43,7 +43,7 @@
    "options": "Flow Provider"
   },
   {
-   "description": "LiteLLM model identifier. With a Provider linked, pick or type just the model (e.g. <code>claude-sonnet-4-6</code>); otherwise use <code>provider/model</code> form, e.g. <code>anthropic/claude-sonnet-4-6</code>, <code>openai/gpt-4.1</code>, <code>ollama/llama3.1</code>",
+   "description": "LiteLLM model identifier. With a Provider linked, pick or type just the model (e.g. <code>claude-sonnet-4-6</code>); otherwise use <code>provider/model</code> form, e.g. <code>anthropic/claude-sonnet-4-6</code>, <code>openai/gpt-4.1</code>, <code>ollama/llama3.1</code>. With the Cloudflare provider, use the Workers AI id, e.g. <code>@cf/zai-org/glm-5.3-flash</code>.",
    "fieldname": "model_id",
    "fieldtype": "Autocomplete",
    "in_list_view": 1,
@@ -51,22 +51,21 @@
    "reqd": 1
   },
   {
-   "description": "Max input tokens. Auto-detected from the model on save; managed by Flow, not user-editable. 0 = unknown.",
+   "description": "Max input tokens. Detected from the model when empty or when the model changes; type a value to override it. 0 = unknown, a default is used.",
    "fieldname": "context_window",
    "fieldtype": "Int",
    "label": "Context Window",
-   "non_negative": 1,
-   "read_only": 1
+   "non_negative": 1
   },
   {
-   "depends_on": "eval:!doc.provider",
+   "depends_on": "eval:!doc.provider && !(doc.model_id || \"\").startsWith(\"cloudflare/\")",
    "description": "API key to authenticate with this model's endpoint. Needed when no Provider is linked.",
    "fieldname": "api_key",
    "fieldtype": "Password",
    "label": "API Key"
   },
   {
-   "depends_on": "eval:!doc.provider",
+   "depends_on": "eval:!doc.provider && !(doc.model_id || \"\").startsWith(\"cloudflare/\")",
    "description": "Endpoint for this model, e.g. a self-hosted Ollama (<code>http://localhost:11434</code>) or a proxy. Needed when no Provider is linked.",
    "fieldname": "base_url",
    "fieldtype": "Data",
@@ -86,7 +85,7 @@
   }
  ],
  "links": [],
- "modified": "2026-11-11 15:00:00.000000",
+ "modified": "2026-11-11 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Flow",
  "name": "Flow Model",

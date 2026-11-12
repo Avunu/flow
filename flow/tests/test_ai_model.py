@@ -45,7 +45,7 @@ class TestModel(UnitTestCase):
 
 	def test_init_allows_empty_api_key_for_local_providers(self):
 		m = Model(model_id="ollama/llama3.1", base_url="http://localhost:11434")
-		self.assertIsNone(m._api_key)
+		self.assertIsNone(m.call_kwargs["api_key"])
 
 	def test_init_rejects_name_with_kwargs(self):
 		with self.assertRaises(ValueError):
@@ -66,8 +66,8 @@ class TestModel(UnitTestCase):
 
 		mock_get_doc.assert_called_once_with("Flow Model", "Claude Sonnet 4.6")
 		self.assertEqual(m.model_id, "anthropic/claude-sonnet-4-6")
-		self.assertEqual(m._api_key, "sk-stored")
-		self.assertEqual(m.params, {"temperature": 0.3})
+		self.assertEqual(m.call_kwargs["api_key"], "sk-stored")
+		self.assertEqual(m.call_kwargs["temperature"], 0.3)
 
 	@patch("frappe.get_doc")
 	def test_init_rejects_disabled_doc(self, mock_get_doc):

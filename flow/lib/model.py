@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 import frappe
 
+from flow.lib import cloudflare
+
 if TYPE_CHECKING:
 	from flow.flow.doctype.flow_model.flow_model import FlowModel
 	from flow.flow.doctype.flow_provider.flow_provider import FlowProvider
@@ -44,27 +46,57 @@ class ChatResponse:
 	usage: dict[str, int] = field(default_factory=dict)
 
 
-def resolve_provider_credentials(model_id: str) -> dict[str, Any]:
-	"""Look up central Flow Provider credentials for a model's provider."""
+def provider_of(model_id: str) -> str:
+	"""The provider litellm derives from a model id, or "" when it can't."""
 	try:
 		import litellm
 
-		provider = litellm.get_llm_provider(model_id)[1]
+		return litellm.get_llm_provider(model_id)[1] or ""
 	except Exception:
-		return {}
+		return ""
 
-	if not provider or not frappe.db.exists("Flow Provider", provider):
-		return {}
 
-	doc = cast("FlowProvider", frappe.get_doc("Flow Provider", provider))
-	if not doc.enabled:
-		return {}
+def resolve_call_kwargs(
+	model_id: str,
+	*,
+	api_key: str | None = None,
+	base_url: str | None = None,
+	params: dict[str, Any] | None = None,
+	embedding: bool = False,
+) -> dict[str, Any]:
+	"""The litellm arguments for a model: the model's own key, base URL and params first, then the
+	central Flow Provider's for whatever the model leaves unset. For an embedding call the provider's
+	`extra_params` are left out: they are chat settings, and the embeddings endpoint can reject them.
 
-	return {
-		"api_key": doc.get_password("api_key", raise_exception=False) or None,
-		"base_url": doc.base_url or None,
-		"extra_params": json.loads(doc.extra_params) if doc.extra_params else {},
-	}
+	Cloudflare models take everything from the `cloudflare` Flow Provider row instead, and Flow maps
+	them onto Cloudflare's OpenAI-compatible endpoint itself (see `flow.lib.cloudflare`)."""
+	provider = provider_of(model_id)
+	row = None
+	if provider and frappe.db.exists("Flow Provider", provider):
+		row = cast("FlowProvider", frappe.get_doc("Flow Provider", provider))
+		if not row.enabled:
+			row = None
+
+	if provider == cloudflare.PROVIDER:
+		if api_key or base_url:
+			raise ValueError(
+				"Cloudflare models take their API token and endpoint from the cloudflare Flow Provider"
+			)
+		if row is None:
+			raise ValueError("Set up and enable the cloudflare Flow Provider to use Cloudflare models")
+		return cloudflare.call_kwargs(row, model_id, params or {}, embedding=embedding)
+
+	kwargs: dict[str, Any] = {"model": model_id, "api_key": api_key or None, **(params or {})}
+	if row is None:
+		if base_url:
+			kwargs["api_base"] = base_url
+		return kwargs
+
+	kwargs["api_key"] = api_key or row.get_password("api_key", raise_exception=False) or None
+	if base_url or row.base_url:
+		kwargs["api_base"] = base_url or row.base_url
+	extra_params = json.loads(row.extra_params) if row.extra_params and not embedding else {}
+	return {**extra_params, **kwargs}
 
 
 def _attr(obj: Any, key: str, default: Any = None) -> Any:
@@ -223,17 +255,8 @@ class Model:
 		if not model_id:
 			raise ValueError("model_id is required")
 
-		# Fall back to the central Flow Provider store for anything not set on the model itself.
-		provider_creds = resolve_provider_credentials(model_id)
-		api_key = api_key or provider_creds.get("api_key")
-		base_url = base_url or provider_creds.get("base_url")
-		if provider_creds.get("extra_params"):
-			params = {**provider_creds["extra_params"], **(params or {})}
-
 		self.model_id = model_id
-		self._api_key = api_key or None
-		self.base_url = base_url
-		self.params = params or {}
+		self.call_kwargs = resolve_call_kwargs(model_id, api_key=api_key, base_url=base_url, params=params)
 		self.timeout = timeout
 
 	@overload
@@ -268,15 +291,7 @@ class Model:
 		if isinstance(messages, str):
 			messages = [{"role": "user", "content": messages}]
 
-		kwargs: dict[str, Any] = {
-			"model": self.model_id,
-			"api_key": self._api_key,
-			"messages": messages,
-			"timeout": self.timeout,
-			**self.params,
-		}
-		if self.base_url:
-			kwargs["api_base"] = self.base_url
+		kwargs: dict[str, Any] = {"messages": messages, "timeout": self.timeout, **self.call_kwargs}
 		if tools:
 			kwargs["tools"] = tools
 

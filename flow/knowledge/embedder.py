@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, cast
 import frappe
 from frappe import _
 
+from flow.lib.model import resolve_call_kwargs
 from flow.utils.errors import throw
 
 if TYPE_CHECKING:
@@ -27,21 +28,19 @@ PROBE_TIMEOUT = 30
 
 
 def _model_config(model: str) -> dict[str, Any]:
-	from flow.lib.model import resolve_provider_credentials
-
 	doc = cast("FlowModel", frappe.get_doc("Flow Model", model))
 	if not doc.enabled:
 		frappe.throw(_("Flow Model {0} is disabled.").format(model), title=_("Model Disabled"))
 
-	provider_creds = resolve_provider_credentials(doc.model_id)
-	config: dict[str, Any] = {
-		"model": doc.model_id,
-		"api_key": doc.get_password("api_key", raise_exception=False) or provider_creds.get("api_key") or "",
-	}
-	base_url = doc.base_url or provider_creds.get("base_url")
-	if base_url:
-		config["api_base"] = base_url
-	return config
+	try:
+		return resolve_call_kwargs(
+			doc.model_id,
+			api_key=doc.get_password("api_key", raise_exception=False),
+			base_url=doc.base_url,
+			embedding=True,
+		)
+	except ValueError as e:
+		throw(str(e), title=_("Model Not Configured"))
 
 
 def _embedding_config() -> dict[str, Any]:
