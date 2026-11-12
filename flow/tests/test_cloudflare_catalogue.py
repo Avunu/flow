@@ -3,10 +3,12 @@
 
 import json
 from datetime import date
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import patch
 
 import frappe
+from frappe.handler import run_doc_method
 from frappe.tests import IntegrationTestCase, UnitTestCase
 
 from flow.flow.doctype.flow_model.flow_model import FlowModel, get_model_hints, get_provider_models
@@ -14,6 +16,7 @@ from flow.flow.doctype.flow_provider.flow_provider import FlowProvider
 from flow.lib import cloudflare
 from flow.lib.cloudflare import CatalogueEntry, CatalogueError
 from flow.tests.cloudflare_mock import (
+	ACCOUNT_ID,
 	PAGE_SIZE,
 	TOKEN,
 	MockCloudflare,
@@ -481,6 +484,52 @@ class TestProviderActions(_CatalogueCase):
 				action()
 
 
+class TestActionsOnAClientSuppliedDocument(_CatalogueCase):
+	"""Whitelisted methods run on the document the client sends, which was never validated."""
+
+	def setUp(self):
+		super().setUp()
+		patcher = patch.object(frappe.local, "request", SimpleNamespace(method="POST"), create=True)
+		patcher.start()
+		self.addCleanup(patcher.stop)
+
+	def _run(self, method: str, base: FlowProvider | None = None, **changes: Any) -> None:
+		"""Call the method as `/api/method/run_doc_method` does: on the document the client sent."""
+		doc = {**(base or self.provider).as_dict(), **changes}
+		run_doc_method(method=method, docs=json.dumps(doc, default=str))
+
+	def test_the_saved_endpoint_is_used_not_the_one_in_the_payload(self):
+		# The mock is the saved endpoint; the payload names somewhere else and a wrong account.
+		for method in ("test_connection", "sync_models"):
+			with self.subTest(method=method):
+				self.cloudflare.reset()
+				self._run(method, base_url="https://elsewhere.invalid/ai/v1", account_id="0" * 32)
+
+				self.assertTrue(self.cloudflare.calls("/ai/models/search"))
+				self.assertEqual(
+					{r["headers"]["host"].split(":")[0] for r in self.cloudflare.requests}, {"127.0.0.1"}
+				)
+
+	def test_plain_http_stays_refused_after_developer_mode_is_switched_off(self):
+		# The row was saved while developer mode was on (the class patch); the token must not go over http now.
+		for method in ("test_connection", "sync_models"):
+			with (
+				self.subTest(method=method),
+				patch.dict(frappe.conf, {"developer_mode": 0}),
+				self.assertRaisesRegex(frappe.ValidationError, "must use https"),
+			):
+				self._run(method)
+		self.assertEqual(self.cloudflare.requests, [])
+		self.assertIsNone(cloudflare.get_catalogue(fetch=False))
+
+	def test_a_payload_cannot_turn_another_provider_into_cloudflare(self):
+		other = cast(
+			FlowProvider, frappe.get_doc({"doctype": "Flow Provider", "provider": "openai"}).insert()
+		)
+		with self.assertRaisesRegex(frappe.ValidationError, "only applies to the cloudflare provider"):
+			self._run("sync_models", other, provider="cloudflare", account_id=ACCOUNT_ID)
+
+
 class TestPickerAndHints(_CatalogueCase):
 	def test_a_cold_cache_never_reaches_cloudflare_for_the_picker(self):
 		get_provider_models("cloudflare")
@@ -517,6 +566,14 @@ class TestPickerAndHints(_CatalogueCase):
 		self.assertEqual(get_model_hints(), {})
 		self.assertEqual(get_model_hints("openai/gpt-4.1"), {})
 		self.assertEqual(get_model_hints("cloudflare/@cf/nobody/nothing"), {})
+
+	def test_the_picker_needs_read_permission(self):
+		cloudflare.get_catalogue(fetch=True)
+		frappe.set_user("Guest")
+
+		for provider in ("cloudflare", "openai", None):
+			with self.subTest(provider=provider), self.assertRaises(frappe.PermissionError):
+				get_provider_models(provider)
 
 	def test_hints_need_read_permission(self):
 		frappe.set_user("Guest")

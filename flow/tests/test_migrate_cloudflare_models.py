@@ -237,7 +237,89 @@ class TestOtherShapes(_MigrationCase):
 
 		self.assertEqual(_model_state(name)["provider"], "cloudflare")
 
+	def test_harmless_variations_of_the_base_url_are_still_recognised(self):
+		variants = {
+			"slash": f"{API_URL}/",
+			"padded": f" {API_URL} ",
+			"query": f"{API_URL}?x=1",
+			"fragment": f"{API_URL}/#frag",
+			"completions": f"{API_URL}/chat/completions",
+			"upper host": API_URL.replace("api.cloudflare.com", "API.Cloudflare.com"),
+			"upper account": API_URL.replace(ACCOUNT_ID, ACCOUNT_ID.upper()),
+			"scheme": API_URL.replace("https", "HTTPS"),
+		}
+		names = {
+			label: _seed_model(label, token=MODEL_TOKEN, base_url=url) for label, url in variants.items()
+		}
+
+		self.migrate()
+
+		for label, name in names.items():
+			with self.subTest(variant=label):
+				self.assertEqual(_model_state(name)["model_id"], NEW_ID)
+		provider = _provider_state()
+		assert provider
+		self.assertEqual(provider["account_id"], ACCOUNT_ID)
+
+	def test_a_base_url_that_is_not_a_cloudflare_endpoint_is_left_alone_and_logged_by_name(self):
+		variants = {
+			"plain http": API_URL.replace("https", "http"),
+			"no account": API_URL.replace(ACCOUNT_ID, ""),
+			"short account": API_URL.replace(ACCOUNT_ID, ACCOUNT_ID[:-1]),
+			"other host": API_URL.replace("api.cloudflare.com", "api.cloudflare.com.example.net"),
+			"port": API_URL.replace("api.cloudflare.com", "api.cloudflare.com:8443"),
+			"userinfo": API_URL.replace("https://", "https://user:pw@"),
+			"other path": f"{API_URL}/extra",
+			"no url": None,
+		}
+		names = {
+			label: _seed_model(label, token=MODEL_TOKEN, base_url=url) for label, url in variants.items()
+		}
+		before = {label: _model_state(name) for label, name in names.items()}
+
+		self.migrate()
+
+		log = "\n".join(self.logged)
+		for label, name in names.items():
+			with self.subTest(variant=label):
+				self.assertEqual(_model_state(name), before[label])
+				self.assertIn(
+					f"left {name!r} alone: its Base URL is not a recognised Cloudflare endpoint", log
+				)
+		self.assertNoSecretsLogged()
+		self.assertNotIn("pw@", log)
+
+	def test_a_row_on_another_gateway_than_the_providers_is_left_alone_and_logged_by_name(self):
+		frappe.get_doc(provider_row(gateway_id="mine", api_key=PROVIDER_TOKEN)).insert()
+		url = f"https://gateway.ai.cloudflare.com/v1/{ACCOUNT_ID}/other/workers-ai"
+		other = _seed_model("Other Gateway", token=PROVIDER_TOKEN, base_url=url)
+		direct = _seed_model("Direct", token=PROVIDER_TOKEN)
+		before = _model_state(other)
+
+		self.migrate()
+
+		self.assertEqual(_model_state(other), before)
+		self.assertEqual(_model_state(direct)["model_id"], NEW_ID)
+		self.assertIn(
+			"left 'Other Gateway' alone: it uses another Cloudflare account or gateway",
+			"\n".join(self.logged),
+		)
+		provider = _provider_state()
+		assert provider
+		self.assertEqual(provider["gateway_id"], "mine")
+
+	def test_a_row_on_the_providers_own_gateway_moves(self):
+		frappe.get_doc(provider_row(gateway_id="mine", api_key=PROVIDER_TOKEN)).insert()
+		url = f"https://gateway.ai.cloudflare.com/v1/{ACCOUNT_ID}/mine/workers-ai"
+		name = _seed_model(token=PROVIDER_TOKEN, base_url=url)
+
+		self.migrate()
+
+		self.assertEqual(_model_state(name)["model_id"], NEW_ID)
+
 	def test_a_row_with_a_different_token_is_left_alone_and_logged_by_name(self):
+		# The provider's token is never replaced by a model's, and a model never silently switches to a
+		# token it was not using: the owner sets the right token on the provider and runs the patch again.
 		_seed_provider(token=PROVIDER_TOKEN)
 		same = _seed_model("Same Token", token=PROVIDER_TOKEN)
 		different = _seed_model("Other Token", token=MODEL_TOKEN)

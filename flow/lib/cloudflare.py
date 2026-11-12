@@ -42,6 +42,26 @@ HEADER_NAME_PATTERN = re.compile(r"^cf-aig-[a-z0-9-]+$")
 DENIED_HEADERS = frozenset({"cf-aig-authorization", "cf-aig-gateway-id"})
 GATEWAY_HEADER = "cf-aig-gateway-id"
 MAX_HEADER_VALUE_LENGTH = 1024
+# The only request settings a Cloudflare model or provider may carry in its params. Anything else
+# litellm accepts (`headers`, `extra_body`, `organization`, ...) could reach the request around the
+# header rules above, so it is refused rather than passed through.
+ALLOWED_PARAMS = frozenset(
+	{
+		"temperature",
+		"top_p",
+		"max_tokens",
+		"max_completion_tokens",
+		"reasoning_effort",
+		"stop",
+		"seed",
+		"frequency_penalty",
+		"presence_penalty",
+		"response_format",
+		"parallel_tool_calls",
+		"n",
+		"extra_headers",
+	}
+)
 
 
 def is_hosted_model(model_part: str) -> bool:
@@ -108,6 +128,25 @@ def validate_extra_headers(value: object) -> dict[str, str]:
 	return headers
 
 
+def validate_params(value: object, *, title: str) -> dict[str, Any]:
+	"""Check the params JSON of a Cloudflare provider or model: only `ALLOWED_PARAMS` keys, and
+	`extra_headers` limited to gateway controls. Returns the params as given."""
+	if value is None:
+		return {}
+	if not isinstance(value, dict):
+		throw(_("{0} must be a JSON object.").format(title), title=_("Invalid Params"))
+	unsupported = sorted(str(key) for key in value if key not in ALLOWED_PARAMS)
+	if unsupported:
+		throw(
+			_("{0} for Cloudflare models may only use: {1}. Not allowed: {2}.").format(
+				title, ", ".join(sorted(ALLOWED_PARAMS)), ", ".join(unsupported)
+			),
+			title=_("Invalid Params"),
+		)
+	validate_extra_headers(value.get("extra_headers"))
+	return value
+
+
 def check_base_url(base_url: str | None) -> None:
 	"""The token goes wherever the base URL points, so plain http is for developer mode only."""
 	if base_url and base_url.lower().startswith("http://") and not frappe.conf.developer_mode:
@@ -117,10 +156,14 @@ def check_base_url(base_url: str | None) -> None:
 
 
 def api_root(provider: FlowProvider) -> str:
-	"""The OpenAI-compatible root, `<...>/ai/v1`: the Base URL override, else Cloudflare's own."""
+	"""The OpenAI-compatible root, `<...>/ai/v1`: the Base URL override, else Cloudflare's own.
+
+	Every request that carries the token starts here, so the checks on where it goes live here too."""
+	account_id = validate_account_id(provider.account_id)
+	check_base_url(provider.base_url)
 	if provider.base_url:
 		return provider.base_url.rstrip("/")
-	return API_ROOT.format(account_id=validate_account_id(provider.account_id))
+	return API_ROOT.format(account_id=account_id)
 
 
 def _json_object(raw: str | None) -> dict[str, Any]:
@@ -128,11 +171,15 @@ def _json_object(raw: str | None) -> dict[str, Any]:
 	return parsed if isinstance(parsed, dict) else {}
 
 
-def call_kwargs(provider: FlowProvider, model_id: str, params: dict[str, Any]) -> dict[str, Any]:
+def call_kwargs(
+	provider: FlowProvider, model_id: str, params: dict[str, Any], *, embedding: bool = False
+) -> dict[str, Any]:
 	"""litellm arguments for a `cloudflare/@cf/...` model, with its credentials from the provider row.
 
 	`params` are the model's own; the provider's `extra_params` sit under them, except `extra_headers`,
-	which merge (the model's win) and always end with the gateway selector."""
+	which merge (the model's win) and always end with the gateway selector. Both are limited to
+	`ALLOWED_PARAMS`. An embedding call takes the credentials, endpoint and headers only: chat
+	settings such as `temperature` would be sent to the embeddings endpoint."""
 	model_part = strip_provider(model_id)
 	if not is_hosted_model(model_part):
 		raise ValueError(
@@ -141,20 +188,21 @@ def call_kwargs(provider: FlowProvider, model_id: str, params: dict[str, Any]) -
 	token = provider.get_password("api_key", raise_exception=False)
 	if not token:
 		raise ValueError("The cloudflare Flow Provider has no API token")
-	check_base_url(provider.base_url)
 
-	merged = {**_json_object(provider.extra_params), **params}
+	provider_params = validate_params(_json_object(provider.extra_params), title=_("Extra Params"))
+	params = validate_params(params, title=_("Params"))
 	headers = {
-		**validate_extra_headers(_json_object(provider.extra_params).get("extra_headers")),
+		**validate_extra_headers(provider_params.get("extra_headers")),
 		**validate_extra_headers(params.get("extra_headers")),
 	}
 	gateway_id = validate_gateway_id(provider.gateway_id)
 	if gateway_id:
 		headers[GATEWAY_HEADER] = gateway_id
-	merged.pop("extra_headers", None)
+	settings = {} if embedding else {**provider_params, **params}
+	settings.pop("extra_headers", None)
 
 	kwargs: dict[str, Any] = {
-		**merged,
+		**settings,
 		"model": f"openai/{model_part}",
 		"api_key": token,
 		"api_base": api_root(provider),

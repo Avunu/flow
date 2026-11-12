@@ -162,8 +162,7 @@ class FlowModel(Document):
 				_("Set up and enable the cloudflare Flow Provider first."),
 				title=_("Cloudflare Not Configured"),
 			)
-		params = json.loads(self.params) if self.params else {}
-		cloudflare.validate_extra_headers(params.get("extra_headers"))
+		params = cloudflare.validate_params(json.loads(self.params) if self.params else {}, title=_("Params"))
 
 		entry = cloudflare.catalogue_entry(self.model_id, fetch=True)
 		cloudflare.validate_reasoning_effort(entry, params)
@@ -210,7 +209,11 @@ class FlowModel(Document):
 			)
 		except Exception as e:
 			# Request details can echo the credentials, so scrub them from what the user sees.
-			frappe.throw(cloudflare.explain_error(e, secret), title=_(type(e).__name__))
+			if provider_of(self.model_id) == cloudflare.PROVIDER:
+				message = cloudflare.explain_error(e, secret)
+			else:
+				message = cloudflare.redact(str(e) or type(e).__name__, secret)[:500]
+			frappe.throw(message, title=_(type(e).__name__))
 
 		return {"ok": True, "message": _("Connection OK")}
 
@@ -234,12 +237,13 @@ def _detect_context_window(model_id: str) -> int:
 
 @frappe.whitelist()
 def get_provider_models(provider: str | None = None) -> list[str] | list[dict[str, str]]:
+	frappe.has_permission("Flow Model", "read", throw=True)
 	if not provider:
 		return []
 
 	name = provider.strip().lower()
 	# The Cloudflare catalogue comes from the cache only: a fetch spends the stored token, and any
-	# desk user can call this. "Sync Models" on the provider fills it.
+	# reader of Flow Models can call this. "Sync Models" on the provider fills it.
 	if name == cloudflare.PROVIDER and (catalogue := cloudflare.get_catalogue(fetch=False)):
 		return [{"value": entry.id, "description": cloudflare.describe(entry)} for entry in catalogue]
 

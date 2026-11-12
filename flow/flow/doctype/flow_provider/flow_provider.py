@@ -2,6 +2,7 @@
 # License: MIT. See LICENSE
 
 import json
+from typing import cast
 from urllib.parse import urlparse
 
 import frappe
@@ -122,25 +123,29 @@ class FlowProvider(Document):
 		cloudflare.validate_gateway_id(self.gateway_id)
 		cloudflare.check_base_url(self.base_url)
 		if self.extra_params:
-			cloudflare.validate_extra_headers(json.loads(self.extra_params).get("extra_headers"))
+			cloudflare.validate_params(json.loads(self.extra_params), title=_("Extra Params"))
 		# The doc value is masked after the first save, so ask for the stored password.
 		if self.enabled and not self.get_password("api_key", raise_exception=False):
 			frappe.throw(
 				_("An API token is required for the cloudflare provider."), title=_("Missing API Token")
 			)
 
-	def _require_cloudflare(self):
+	def _require_cloudflare(self) -> FlowProvider:
+		"""The saved row. A whitelisted method gets the document the client sent, which was never
+		validated, so the endpoint and the account come from the database instead."""
 		self.check_permission("write")
-		if self.provider != cloudflare.PROVIDER:
+		saved = cast("FlowProvider", frappe.get_doc("Flow Provider", str(self.name)))
+		if saved.provider != cloudflare.PROVIDER:
 			throw(_("This only applies to the cloudflare provider."), title=_("Invalid Provider"))
+		return saved
 
 	@frappe.whitelist()
 	def test_connection(self):
 		"""Read the model catalogue with the saved token: checks the account id and the token's scope
 		without spending any inference."""
-		self._require_cloudflare()
-		url = cloudflare.catalogue_url(self)
-		token = self.get_password("api_key", raise_exception=False)
+		saved = self._require_cloudflare()
+		url = cloudflare.catalogue_url(saved)
+		token = saved.get_password("api_key", raise_exception=False)
 		if url is None or not token:
 			throw(
 				_("The catalogue is only available on the default Cloudflare endpoint."),
@@ -153,7 +158,7 @@ class FlowProvider(Document):
 
 		info = body.get("result_info")
 		total = info.get("total_count") if isinstance(info, dict) else None
-		gateway = self.gateway_id or _("none (direct)")
+		gateway = saved.gateway_id or _("none (direct)")
 		return {
 			"ok": True,
 			"message": _("Reached the account ({0} models in the catalogue). Gateway: {1}.").format(
@@ -164,9 +169,9 @@ class FlowProvider(Document):
 	@frappe.whitelist()
 	def sync_models(self):
 		"""Reload the model catalogue from Cloudflare, and say which Flow Models it flags."""
-		self._require_cloudflare()
+		saved = self._require_cloudflare()
 		try:
-			entries = cloudflare.sync_catalogue(self)
+			entries = cloudflare.sync_catalogue(saved)
 		except cloudflare.CatalogueError as e:
 			throw(str(e), title=_("Sync Failed"))
 

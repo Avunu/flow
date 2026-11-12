@@ -62,9 +62,11 @@ def resolve_call_kwargs(
 	api_key: str | None = None,
 	base_url: str | None = None,
 	params: dict[str, Any] | None = None,
+	embedding: bool = False,
 ) -> dict[str, Any]:
 	"""The litellm arguments for a model: the model's own key, base URL and params first, then the
-	central Flow Provider's for whatever the model leaves unset.
+	central Flow Provider's for whatever the model leaves unset. For an embedding call the provider's
+	`extra_params` are left out: they are chat settings, and the embeddings endpoint can reject them.
 
 	Cloudflare models take everything from the `cloudflare` Flow Provider row instead, and Flow maps
 	them onto Cloudflare's OpenAI-compatible endpoint itself (see `flow.lib.cloudflare`)."""
@@ -82,7 +84,7 @@ def resolve_call_kwargs(
 			)
 		if row is None:
 			raise ValueError("Set up and enable the cloudflare Flow Provider to use Cloudflare models")
-		return cloudflare.call_kwargs(row, model_id, params or {})
+		return cloudflare.call_kwargs(row, model_id, params or {}, embedding=embedding)
 
 	kwargs: dict[str, Any] = {"model": model_id, "api_key": api_key or None, **(params or {})}
 	if row is None:
@@ -93,7 +95,7 @@ def resolve_call_kwargs(
 	kwargs["api_key"] = api_key or row.get_password("api_key", raise_exception=False) or None
 	if base_url or row.base_url:
 		kwargs["api_base"] = base_url or row.base_url
-	extra_params = json.loads(row.extra_params) if row.extra_params else {}
+	extra_params = json.loads(row.extra_params) if row.extra_params and not embedding else {}
 	return {**extra_params, **kwargs}
 
 

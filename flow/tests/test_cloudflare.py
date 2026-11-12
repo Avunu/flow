@@ -96,6 +96,18 @@ class TestValidators(UnitTestCase):
 			with self.subTest(headers=bad), self.assertRaises(frappe.ValidationError):
 				cloudflare.validate_extra_headers(bad)
 
+	def test_params_allow_only_request_settings(self):
+		params = {"temperature": 0.2, "reasoning_effort": "high", "extra_headers": {"cf-aig-cache-ttl": "60"}}
+		self.assertEqual(cloudflare.validate_params(params, title="Params"), params)
+		self.assertEqual(cloudflare.validate_params(None, title="Params"), {})
+
+	def test_params_refuse_anything_that_could_reach_the_request_around_the_header_rules(self):
+		for key in ("headers", "extra_body", "custom_llm_provider", "organization", "api_version", "user"):
+			with self.subTest(key=key), self.assertRaisesRegex(frappe.ValidationError, key):
+				cloudflare.validate_params({"temperature": 0.1, key: {"X-Evil": "1"}}, title="Params")
+		with self.assertRaises(frappe.ValidationError):
+			cloudflare.validate_params(["temperature"], title="Params")
+
 	def test_http_base_url_needs_developer_mode(self):
 		with patch.dict(frappe.conf, {"developer_mode": 0}):
 			cloudflare.check_base_url("https://proxy.example.com/ai/v1")
@@ -189,6 +201,41 @@ class TestProviderValidation(IntegrationTestCase):
 		for bad in ({"authorization": "x"}, {"cf-aig-gateway-id": "other"}, {"cf-aig-ttl": "a\r\nb"}):
 			with self.subTest(headers=bad), self.assertRaisesRegex(frappe.ValidationError, "Header|header"):
 				self._insert(extra_params=json.dumps({"extra_headers": bad}))
+
+
+BAD_PARAMS = {"headers": {"X-Evil": "1", "Authorization": "Bearer evil"}, "extra_body": {"foo": "bar"}}
+
+
+class TestParamsValidation(IntegrationTestCase):
+	def setUp(self):
+		frappe.get_doc(provider_row()).insert()
+		offline_catalogue()
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def test_a_provider_refuses_headers_and_extra_body_in_its_extra_params(self):
+		frappe.db.rollback()
+		for key, value in BAD_PARAMS.items():
+			with self.subTest(key=key), self.assertRaisesRegex(frappe.ValidationError, key):
+				frappe.get_doc(provider_row(extra_params=json.dumps({key: value}))).insert()
+
+	def test_a_model_refuses_headers_and_extra_body_in_its_params(self):
+		for key, value in BAD_PARAMS.items():
+			with self.subTest(key=key), self.assertRaisesRegex(frappe.ValidationError, key):
+				frappe.get_doc(_model(params=json.dumps({key: value}))).insert()
+
+	def test_a_row_that_got_past_validation_is_still_refused_when_called(self):
+		frappe.get_doc(_model()).insert()
+		frappe.db.set_value("Flow Model", "Cloudflare GLM", "params", json.dumps(BAD_PARAMS))
+		with self.assertRaisesRegex(frappe.ValidationError, "headers"):
+			Model("Cloudflare GLM")
+
+		frappe.db.set_value("Flow Model", "Cloudflare GLM", "params", None)
+		frappe.db.set_value("Flow Provider", "cloudflare", "extra_params", json.dumps(BAD_PARAMS))
+		frappe.clear_document_cache("Flow Provider", "cloudflare")
+		with self.assertRaisesRegex(frappe.ValidationError, "headers"):
+			Model("Cloudflare GLM")
 
 
 class TestModelValidation(IntegrationTestCase):
@@ -321,6 +368,38 @@ class TestResolver(IntegrationTestCase):
 			{"cf-aig-cache-ttl": "60", "cf-aig-skip-cache": "true", "cf-aig-gateway-id": "my-gw"},
 		)
 		self.assertEqual((kwargs["temperature"], kwargs["max_tokens"]), (0.1, 5))
+
+	def test_an_embedding_call_takes_no_chat_settings(self):
+		extra = {"extra_headers": {"cf-aig-cache-ttl": "60"}, "temperature": 0.2, "reasoning_effort": "high"}
+		frappe.get_doc(provider_row(gateway_id="my-gw", extra_params=json.dumps(extra))).insert()
+
+		kwargs = resolve_call_kwargs("cloudflare/@cf/baai/bge-m3", params={"max_tokens": 5}, embedding=True)
+
+		self.assertEqual(
+			kwargs,
+			{
+				"model": "openai/@cf/baai/bge-m3",
+				"api_key": TOKEN,
+				"api_base": f"https://api.cloudflare.com/client/v4/accounts/{ACCOUNT_ID}/ai/v1",
+				"extra_headers": {"cf-aig-cache-ttl": "60", "cf-aig-gateway-id": "my-gw"},
+			},
+		)
+
+	def test_other_providers_leave_their_chat_settings_out_of_an_embedding_call(self):
+		frappe.get_doc(
+			{
+				"doctype": "Flow Provider",
+				"provider": "openai",
+				"api_key": "test-key",
+				"extra_params": json.dumps({"temperature": 0.2, "max_tokens": 50}),
+			}
+		).insert()
+
+		self.assertEqual(
+			resolve_call_kwargs("openai/text-embedding-3-small", embedding=True),
+			{"model": "openai/text-embedding-3-small", "api_key": "test-key"},
+		)
+		self.assertEqual(resolve_call_kwargs("openai/gpt-4.1")["temperature"], 0.2)
 
 	def test_a_gateway_header_in_params_is_refused(self):
 		frappe.get_doc(provider_row(gateway_id="my-gw")).insert()
@@ -551,6 +630,81 @@ class TestAgainstCloudflare(IntegrationTestCase):
 		self.assertEqual(request["path"], f"/client/v4/accounts/{ACCOUNT_ID}/ai/v1/embeddings")
 		self.assertEqual(request["headers"]["authorization"], f"Bearer {TOKEN}")
 		self.assertEqual(request["body"]["model"], "@cf/baai/bge-m3")
+
+	def test_embeddings_carry_no_chat_settings_from_the_provider(self):
+		self.provider.extra_params = json.dumps({"temperature": 0.2, "reasoning_effort": "high"})
+		self.provider.save()
+		embedding_model = cast(
+			FlowModel,
+			frappe.get_doc(_model(title="Cloudflare Embed", model_id="@cf/baai/bge-m3")).insert(),
+		)
+
+		embedder.probe_dimension(str(embedding_model.name))
+
+		(request,) = self.cloudflare.calls("/embeddings")
+		self.assertNotIn("temperature", request["body"])
+		self.assertNotIn("reasoning_effort", request["body"])
+
+	def test_openai_embeddings_carry_no_chat_settings_from_the_provider(self):
+		frappe.get_doc(
+			{
+				"doctype": "Flow Provider",
+				"provider": "openai",
+				"extra_params": json.dumps({"temperature": 0.2, "max_tokens": 50}),
+			}
+		).insert()
+		embedding_model = cast(
+			FlowModel,
+			frappe.get_doc(
+				{
+					"doctype": "Flow Model",
+					"title": "OpenAI Embed",
+					"model_id": "openai/text-embedding-3-small",
+					"api_key": TOKEN,
+					"base_url": self.cloudflare.base_url,
+					"enabled": 1,
+				}
+			).insert(),
+		)
+
+		embedder.probe_dimension(str(embedding_model.name))
+
+		(request,) = self.cloudflare.calls("/embeddings")
+		self.assertNotIn("temperature", request["body"])
+		self.assertNotIn("max_tokens", request["body"])
+
+	def test_a_non_cloudflare_error_gets_no_cloudflare_hint(self):
+		frappe.message_log.clear()
+		model = cast(
+			FlowModel,
+			frappe.get_doc(
+				{
+					"doctype": "Flow Model",
+					"title": "OpenAI Elsewhere",
+					"model_id": "openai/gpt-4o-mini",
+					"api_key": "test-wrong-key",
+					"base_url": self.cloudflare.base_url,
+					"enabled": 1,
+				}
+			).insert(),
+		)
+
+		with self.assertRaises(frappe.ValidationError):
+			model.test_connection()
+
+		shown = str(frappe.message_log)
+		self.assertIn("AuthenticationError", shown)
+		for cloudflare_text in ("Workers AI", "API token", "code 10000", "Account ID"):
+			self.assertNotIn(cloudflare_text, shown)
+		self.assertNotIn("test-wrong-key", shown)
+
+	def test_a_cloudflare_error_explains_the_usual_cause(self):
+		self.provider.api_key = "test-wrong-token"
+		self.provider.save()
+		model = cast(FlowModel, frappe.get_doc(_model()).insert())
+
+		with self.assertRaisesRegex(frappe.ValidationError, "Workers AI"):
+			model.test_connection()
 
 	def test_embeddings_in_a_batch_keep_their_order(self):
 		embedding_model = cast(

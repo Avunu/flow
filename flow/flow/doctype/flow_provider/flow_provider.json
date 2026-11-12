@@ -78,7 +78,7 @@
    "label": "Extra Parameters"
   },
   {
-   "description": "Optional JSON object of provider-specific kwargs merged into every call (e.g. <code>{\"api_version\": \"2024-02-01\"}</code> for Azure). A model's own params take precedence.",
+   "description": "Optional JSON object of provider-specific kwargs merged into every call (e.g. <code>{\"api_version\": \"2024-02-01\"}</code> for Azure). A model's own params take precedence. For Cloudflare only request settings (<code>temperature</code>, <code>max_tokens</code>, <code>reasoning_effort</code>, ...) and <code>cf-aig-*</code> entries in <code>extra_headers</code> are accepted.",
    "fieldname": "extra_params",
    "fieldtype": "JSON",
    "label": "Extra Params"

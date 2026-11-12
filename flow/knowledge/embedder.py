@@ -34,7 +34,10 @@ def _model_config(model: str) -> dict[str, Any]:
 
 	try:
 		return resolve_call_kwargs(
-			doc.model_id, api_key=doc.get_password("api_key", raise_exception=False), base_url=doc.base_url
+			doc.model_id,
+			api_key=doc.get_password("api_key", raise_exception=False),
+			base_url=doc.base_url,
+			embedding=True,
 		)
 	except ValueError as e:
 		throw(str(e), title=_("Model Not Configured"))
